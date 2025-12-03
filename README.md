@@ -36,8 +36,8 @@ services:
 
 volumes:
   bitaxe_bench_data:
-    driver: local```
-
+    driver: local
+```
 ## Configuration
 
 The script includes several configurable parameters:
