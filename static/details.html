@@ -166,6 +166,46 @@
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 1rem;
     }
+	.heatmaps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem;
+      margin-top: 0.75rem;
+    }
+    .heatmap-card h3 {
+      font-size: 0.9rem;
+      margin: 0 0 0.35rem;
+    }
+    .heatmap-grid {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.7rem;
+    }
+    .heatmap-grid th,
+    .heatmap-grid td {
+      border: 1px solid var(--border);
+      padding: 0.15rem 0.25rem;
+      text-align: center;
+    }
+    .heatmap-grid th {
+      background: var(--table-stripe);
+    }
+    .heatmap-cell-value {
+      opacity: 0.9;
+    }
+	.heatmap-grid td.heatmap-failed {
+	  border: 1px solid rgba(0,0,0,0.2);
+	}
+
+	[data-theme="dark"] .heatmap-grid td.heatmap-failed {
+	  border-color: rgba(255,255,255,0.25);
+	}
+
+	.heatmap-grid td.heatmap-skipped {
+	  opacity: 0.6;
+	}
+
+
     canvas {
       width: 100%;
       max-width: 100%;
@@ -323,6 +363,40 @@
         </div>
       </div>
     </section>
+	
+	<!-- Heatmaps (grid sweeps only) -->
+    <section class="card" id="heatmapSection" style="display:none;">
+      <div class="card-title">
+        <h2>Voltage / frequency heatmaps</h2>
+        <span class="pill">Grid sweeps only</span>
+      </div>
+
+      <div id="heatmapMeta"
+           class="muted"
+           style="font-size:0.8rem;margin-bottom:0.5rem;">
+      </div>
+
+      <div class="heatmaps-grid">
+        <div class="heatmap-card">
+          <h3>Hashrate (GH/s)</h3>
+          <div id="heatmapHashContainer"></div>
+        </div>
+        <div class="heatmap-card">
+          <h3>Efficiency (J/TH)</h3>
+          <div id="heatmapEffContainer"></div>
+        </div>
+        <div class="heatmap-card">
+          <h3>Error rate (%)</h3>
+          <div id="heatmapErrContainer"></div>
+        </div>
+      </div>
+
+      <div class="muted" style="font-size:0.72rem;margin-top:0.4rem;">
+        Rows are core voltage (mV), columns are frequency (MHz).
+        Colors go from red (worst) to green (best).
+        Empty cells mean that particular combo wasn’t measured or failed early.
+      </div>
+    </section>
 
     <!-- Raw JSON (optional) -->
     <section class="card">
@@ -354,6 +428,12 @@
     const chartsGrid = document.getElementById("chartsGrid");
     const chartsEmpty = document.getElementById("chartsEmpty");
     const timelineWrapper = document.getElementById("timelineWrapper");
+	const heatmapSection = document.getElementById("heatmapSection");
+    const heatmapMeta = document.getElementById("heatmapMeta");
+    const heatmapHashContainer = document.getElementById("heatmapHashContainer");
+    const heatmapEffContainer = document.getElementById("heatmapEffContainer");
+    const heatmapErrContainer = document.getElementById("heatmapErrContainer");
+
 
     function setTheme(theme) {
       root.setAttribute("data-theme", theme);
@@ -433,6 +513,183 @@
 
       return { bestHashIndex, bestEffIndex, bestHashValue, bestEffValue };
     }
+	
+	function buildHeatmaps(points, resultsRoot, run) {
+	  if (!heatmapSection) return;
+
+	  let cfg = run.config || {};
+	  // Prefer config from the results JSON (always an object).
+	  if (resultsRoot && typeof resultsRoot.config === "object") {
+		cfg = resultsRoot.config;
+	  } else if (run && typeof run.config === "object") {
+		// Fallback to parsed config from /api (live runs or parsed config_json)
+		cfg = run.config;
+	  }
+	  const mode = (cfg.sweep_mode || cfg.sweepMode || "").toLowerCase();
+
+	  if (mode !== "grid") {
+		heatmapSection.style.display = "none";
+		return;
+	  }
+
+	  const validPoints = points.filter((p) => {
+		const v = p.coreVoltage ?? p.vcore ?? p.core_voltage;
+		const f = p.frequency ?? p.freq ?? p.frequency_mhz;
+		return v != null && f != null;
+	  });
+
+	  if (!validPoints.length) {
+		heatmapSection.style.display = "none";
+		return;
+	  }
+
+	  const voltages = Array.from(
+		new Set(validPoints.map((p) => Number(p.coreVoltage ?? p.vcore ?? p.core_voltage)))
+	  ).sort((a, b) => a - b);
+
+	  const freqs = Array.from(
+		new Set(validPoints.map((p) => Number(p.frequency ?? p.freq ?? p.frequency_mhz)))
+	  ).sort((a, b) => a - b);
+
+	  if (!voltages.length || !freqs.length) {
+		heatmapSection.style.display = "none";
+		return;
+	  }
+
+	  heatmapSection.style.display = "block";
+	  heatmapMeta.textContent =
+		`Grid size: ${voltages.length} voltages × ${freqs.length} frequencies (${validPoints.length} points).`;
+
+	  // NEW: track per-voltage metadata
+	  const rowMeta = {};
+
+	  const lookup = {};
+	  validPoints.forEach((p) => {
+		const v = Number(p.coreVoltage ?? p.vcore ?? p.core_voltage);
+		const f = Number(p.frequency ?? p.freq ?? p.frequency_mhz);
+		const key = `${v}|${f}`;
+		const errorReason = p.errorReason || p.error_reason || null;
+
+		lookup[key] = {
+		  hashrate: toNumOrNull(p.averageHashRate ?? p.hashRate ?? p.average_hashrate),
+		  eff:      toNumOrNull(p.efficiencyJTH ?? p.efficiency ?? p.j_per_th),
+		  err:      toNumOrNull(p.errorPercentage ?? p.error_pct ?? p.errorRate),
+		  errorReason,
+		};
+
+		if (!rowMeta[v]) {
+		  rowMeta[v] = { maxFreq: f, hadFailure: false };
+		} else if (f > rowMeta[v].maxFreq) {
+		  rowMeta[v].maxFreq = f;
+		}
+		if (errorReason) {
+		  rowMeta[v].hadFailure = true;
+		}
+	  });
+
+	  buildSingleHeatmap(heatmapHashContainer, voltages, freqs, lookup, "hashrate", {
+		label: "GH/s",
+		invert: false,
+		decimals: 1,
+	  }, rowMeta);
+
+	  buildSingleHeatmap(heatmapEffContainer, voltages, freqs, lookup, "eff", {
+		label: "J/TH",
+		invert: true,
+		decimals: 2,
+	  }, rowMeta);
+
+	  buildSingleHeatmap(heatmapErrContainer, voltages, freqs, lookup, "err", {
+		label: "%",
+		invert: true,
+		decimals: 2,
+	  }, rowMeta);
+	}
+
+    function buildSingleHeatmap(container, voltages, freqs, lookup, key, opts, rowMeta) {
+	  const values = [];
+
+	  voltages.forEach((v) => {
+		freqs.forEach((f) => {
+		  const entry = lookup[`${v}|${f}`];
+		  if (entry && entry[key] != null && isFinite(entry[key])) {
+			values.push(entry[key]);
+		  }
+		});
+	  });
+
+	  if (!values.length) {
+		container.innerHTML =
+		  `<div class="muted" style="font-size:0.75rem;">No ${opts.label} data for this grid.</div>`;
+		return;
+	  }
+
+	  const min = Math.min(...values);
+	  const max = Math.max(...values);
+	  const span = max - min || 1;
+
+	  function colorFor(value) {
+		if (value == null || !isFinite(value)) return "transparent";
+		let t = (value - min) / span;
+		if (opts.invert) t = 1 - t;
+		t = Math.max(0, Math.min(1, t));
+		const hue = 120 * t; // 0 = red, 120 = green
+		return `hsl(${hue}, 70%, 45%)`;
+	  }
+
+	  // Columns = voltages (x axis), low → high
+  	  // Rows = frequencies (y axis), high → low (so low is at the bottom)
+	  let html = '<table class="heatmap-grid"><thead><tr><th>MHz / mV</th>';
+	  voltages.forEach((v) => {
+	    html += `<th>${v}</th>`;
+	  });
+	  html += "</tr></thead><tbody>";
+
+	  // Render rows from highest freq at the top to lowest at the bottom
+	  const freqRows = [...freqs].sort((a, b) => b - a);
+
+	  freqRows.forEach((f) => {
+	    html += `<tr><th>${f}</th>`;
+
+	    voltages.forEach((v) => {
+	  	  const meta = rowMeta?.[v];
+		  const entry = lookup[`${v}|${f}`];
+		  const baseVal = entry ? entry[key] : null;
+
+		  let bg;
+		  let text = "";
+		  let extraClass = "";
+
+		  if (entry && entry.errorReason) {
+		    // Explicit failure at this grid point → solid red
+		    bg = "hsl(0, 80%, 40%)";
+		    extraClass = "heatmap-failed";
+		    text = "";
+		  } else if (!entry && meta && meta.hadFailure && f > meta.maxFreq) {
+		    // We stopped the sweep at a lower freq for this voltage → skipped
+		    bg = "rgba(148, 163, 184, 0.4)";
+		    extraClass = "heatmap-skipped";
+		  } else {
+		    bg = colorFor(baseVal);
+		    text =
+		  	  baseVal == null || !isFinite(baseVal)
+			    ? ""
+			    : fmtNumber(baseVal, opts.decimals);
+		  }
+
+		  html += `<td class="${extraClass}" style="background:${bg};"><span class="heatmap-cell-value">${text}</span></td>`;
+	    });
+
+	    html += "</tr>";
+	  });
+
+	html += "</tbody></table>";
+	container.innerHTML = html;
+
+
+	  html += "</tbody></table>";
+	  container.innerHTML = html;
+	}
 
     function renderTable(points) {
       if (!points.length) {
@@ -870,6 +1127,7 @@
         renderOverview(run, resultsRoot, points);
         renderTable(points);
         buildCharts(points);
+		buildHeatmaps(points, resultsRoot, run);
 
         notesTextarea.value = run.notes || "";
         rawJsonPre.textContent = JSON.stringify(resultsRoot, null, 2);
