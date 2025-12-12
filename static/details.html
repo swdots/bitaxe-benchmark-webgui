@@ -501,6 +501,25 @@
       const n = Number(value);
       return isFinite(n) ? n : null;
     }
+	
+	function isZeroishHashrate(hr, expected) {
+	  const h = toNumOrNull(hr);
+	  if (h === null) return false;
+
+	  const exp = toNumOrNull(expected);
+
+	  // True zero or negative → definitely bad.
+	  if (h <= 0) return true;
+
+	  // If we know the expected hashrate, treat anything below 0.1% of expected as "zero".
+	  if (exp !== null && exp > 0 && h < exp * 0.001) {
+		return true;
+	  }
+
+	  // Fallback: ultra‑low absolute value in GH/s is also "zero-ish".
+	  // (Real grid points for this profile are in the 4–7 TH/s range.)
+	  return h < 1; // 1 GH/s is still tiny compared to normal points.
+	}
 
     function extractPoints(resultsRoot) {
       if (!resultsRoot) return [];
@@ -580,6 +599,13 @@
 		invert: true,
 		decimals: 0,
 	  },
+	  expected: {
+		key: "expected",
+		label: "expected hash rate (GH/s)",
+		title: "Expected hash rate (GH/s)",
+		invert: true,
+		decimals: 0,
+	  },
 	};
 
 	// We'll stash the last-computed grid so the selector
@@ -653,6 +679,7 @@
 
 		lookup[key] = {
 		  hashrate: toNumOrNull(p.averageHashRate ?? p.hashRate ?? p.average_hashrate),
+		  expected: toNumOrNull(p.expectedHashrate ?? p.expected_hashrate),
 		  eff:      toNumOrNull(p.efficiencyJTH ?? p.efficiency ?? p.j_per_th),
 		  err:      toNumOrNull(p.errorPercentage ?? p.error_pct ?? p.errorRate),
 		  errorReason,
@@ -736,27 +763,21 @@
 	  const values = [];
 
 	  voltages.forEach((v) => {
-		freqs.forEach((f) => {
+	    freqs.forEach((f) => {
 		  const entry = lookup[`${v}|${f}`];
 		  if (!entry) return;
 
 		  const val = entry[key];
 
-		  // Treat explicit error points and 0‑hashrate points as "error cells"
-		  // and exclude them from the color scale.
-		  const isErrorCell =
-			!!entry.errorReason ||
-			(key === "hashrate" && (val === 0 || val === 0.0));
+		  const zeroish = isZeroishHashrate(entry.hashrate, entry.expected);
+
+		  // Treat explicit errorReason and zero-ish hashrate as "error cells"
+		  const isErrorCell = !!entry.errorReason || zeroish;
 
 		  if (!isErrorCell && val != null && isFinite(val)) {
-			// For hashrate, we also ignore <= 0 in the scale even if the backend
-			// didn’t explicitly tag it as an error.
-			if (key === "hashrate" && val <= 0) {
-			  return;
-			}
-			values.push(val);
+		    values.push(val);
 		  }
-		});
+	    });
 	  });
 
 
@@ -802,13 +823,14 @@
 		  let text = "";
 		  let extraClass = "";
 
+		  const zeroish = entry ? isZeroishHashrate(entry.hashrate, entry.expected) : false;
+
 		  const isErrorCell =
-			entry &&
-			(
+		    entry &&
+		    (
 			  entry.errorReason ||
-			  entry.hashrate === 0 ||
-			  entry.hashrate === 0.0
-			);
+			  zeroish
+		    );
 
 		  if (isErrorCell) {
 			// Match index mini heatmap: failed points are purple.
@@ -1032,6 +1054,17 @@
       const effData = points.map((p) => toNumOrNull(p.efficiencyJTH ?? p.efficiency ?? p.j_per_th));
       const freqData = points.map((p) => toNumOrNull(p.frequency ?? p.freq ?? p.frequency_mhz));
       const vcoreData = points.map((p) => toNumOrNull(p.coreVoltage ?? p.vcore ?? p.core_voltage));
+	  // NEW: zero-ish mask + cleaned efficiency data
+	  const zeroishMask = points.map((p, idx) =>
+	    isZeroishHashrate(
+		  hrData[idx],
+		  p.expectedHashrate ?? p.expected_hashrate
+	    )
+	  );
+
+	  const effDataClean = effData.map((val, idx) =>
+	    zeroishMask[idx] ? null : val
+	  );
       const fanPctData = points.map((p) =>
         toNumOrNull(p.fanSpeed ?? p.fan_pct ?? p.fanspeed)
       );
@@ -1107,7 +1140,7 @@
           datasets: [
             {
               label: "Efficiency (J/TH)",
-              data: effData,
+              data: effDataClean,
               spanGaps: true
             }
           ]
@@ -1159,7 +1192,7 @@
             },
             {
               label: "Efficiency (J/TH)",
-              data: effData,
+              data: effDataClean,
               spanGaps: true,
               yAxisID: "yEff"
             },
