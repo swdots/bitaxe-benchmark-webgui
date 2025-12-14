@@ -216,7 +216,17 @@
 	}
 
 
-    canvas {
+    
+	/* Stability highlighting (outlines only; keep heatmap colors) */
+	.heatmap-grid td.heatmap-stable {
+	  box-shadow: inset 0 0 0 2px rgba(236, 72, 153, 0.85); /* pink outline */
+	}
+	.heatmap-grid td.heatmap-best-stable {
+	  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.90); /* white outline */
+	  font-weight: 600;
+	}
+
+canvas {
       width: 100%;
       max-width: 100%;
     }
@@ -344,7 +354,7 @@
     <section class="card">
       <div class="card-title">
         <h2>Charts</h2>
-        <span class="pill">Frequency, power, hashrate, efficiency, fan %, error %</span>
+        <span class="pill">Frequency, power, hashrate, efficiency, fan %, error %, reject %</span>
       </div>
 
       <div id="chartsEmpty" class="muted" style="font-size:0.85rem;display:none;">
@@ -400,18 +410,66 @@
 			<h3 id="heatmapMetricLabel" style="margin:0;">Error rate (%)</h3>
 			<select id="heatmapMetricSelect" style="max-width:200px;">
 			  <option value="err" selected>Error rate (%)</option>
+			  <option value="reject">Reject rate (%)</option>
 			  <option value="pow">Power (W)</option>
 			  <option value="chip">Chip temp (°C)</option>
 			  <option value="vr">VRM temp (°C)</option>
 			  <option value="fanPct">Fan speed (%)</option>
 			  <option value="fanRpm">Fan speed (RPM)</option>
 			  <option value="expected">Expected hash rate (GH/s)</option>
+			  <option value="hashPct">Hash % of expected (%)</option>
 			</select>
 		  </div>
 		  <div id="heatmapErrContainer"></div>
 		</div>
 
       </div>
+
+
+      <div id="stableSuggestWrap"
+           style="margin-top:0.9rem;padding-top:0.9rem;border-top:1px solid var(--border);">
+        <div class="row" style="align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+          <div class="shrink" style="font-weight:600;">Suggested stable settings</div>
+
+          <label class="row shrink" style="gap:0.45rem;align-items:center;margin-left:auto;">
+            <input id="stableHighlightToggle" type="checkbox" checked>
+            <span class="muted" style="font-size:0.8rem;">Highlight stable candidates</span>
+          </label>
+
+          <div id="stableSuggestMeta" class="muted" style="font-size:0.8rem;">–</div>
+        </div>
+
+        <div class="row" style="gap:0.6rem;flex-wrap:wrap;">
+          <div style="min-width:130px;flex:1;">
+            <label class="muted" style="font-size:0.75rem;">Error max (%)</label>
+            <input id="stableErrMax" type="number" step="0.1" min="0" value="2.0">
+          </div>
+          <div style="min-width:130px;flex:1;">
+            <label class="muted" style="font-size:0.75rem;">Reject max (%)</label>
+            <input id="stableRejectMax" type="number" step="0.1" min="0" value="1.0">
+          </div>
+          <div style="min-width:130px;flex:1;">
+            <label class="muted" style="font-size:0.75rem;">Chip headroom (°C)</label>
+            <input id="stableTempMargin" type="number" step="1" min="0" value="2">
+          </div>
+          <div style="min-width:130px;flex:1;">
+            <label class="muted" style="font-size:0.75rem;">VR headroom (°C)</label>
+            <input id="stableVrMargin" type="number" step="1" min="0" value="2">
+          </div>
+          <div style="min-width:130px;flex:1;">
+            <label class="muted" style="font-size:0.75rem;">Power headroom (W)</label>
+            <input id="stablePowerMargin" type="number" step="0.5" min="0" value="2">
+          </div>
+          <div class="shrink" style="align-self:flex-end;">
+            <button class="btn secondary shrink" id="stableApplyBtn">Recompute</button>
+          </div>
+        </div>
+
+        <div id="stableSuggestResult" style="margin-top:0.6rem;font-size:0.9rem;">
+          <span class="muted">–</span>
+        </div>
+      </div>
+
 
       <div class="muted" style="font-size:0.72rem;margin-top:0.4rem;">
         Columns are set core voltages (mV), rows are frequency (MHz).
@@ -458,6 +516,11 @@
     const heatmapErrContainer = document.getElementById("heatmapErrContainer");
 	const heatmapMetricSelect = document.getElementById("heatmapMetricSelect");
 	const heatmapMetricLabel = document.getElementById("heatmapMetricLabel");
+
+	// Stable suggestion / highlighting controls (grid heatmaps only)
+	const stableHighlightToggle = document.getElementById("stableHighlightToggle");
+	const stableApplyBtn = document.getElementById("stableApplyBtn");
+
 
     function setTheme(theme) {
       root.setAttribute("data-theme", theme);
@@ -522,6 +585,168 @@
 	  return h < 1; // 1 GH/s is still tiny compared to normal points.
 	}
 
+	function keyVF(v, f) { return `${v}|${f}`; }
+
+	function readNum(id, fallback) {
+	  const el = document.getElementById(id);
+	  const v = el ? Number(el.value) : NaN;
+	  return Number.isFinite(v) ? v : fallback;
+	}
+
+	function getStableHighlightEnabled() {
+	  return stableHighlightToggle ? !!stableHighlightToggle.checked : true;
+	}
+
+	function computeStableSuggestion(points, cfg, lookup) {
+	  const maxTemp = toNumOrNull(cfg?.max_temp ?? cfg?.maxTemp);
+	  const maxVr   = toNumOrNull(cfg?.max_vr_temp ?? cfg?.maxVrTemp);
+	  const maxPow  = toNumOrNull(cfg?.max_power ?? cfg?.maxPower);
+
+	  const errDefault = toNumOrNull(cfg?.error_rate_warn_threshold);
+	  const errMax = readNum("stableErrMax", errDefault ?? 2.0);
+	  const rejMax = readNum("stableRejectMax", 1.0);
+	  const tMargin = readNum("stableTempMargin", 2);
+	  const vrMargin = readNum("stableVrMargin", 2);
+	  const pMargin = readNum("stablePowerMargin", 2);
+
+	  const tLimit  = maxTemp == null ? null : (maxTemp - tMargin);
+	  const vrLimit = maxVr   == null ? null : (maxVr - vrMargin);
+	  const pLimit  = maxPow  == null ? null : (maxPow - pMargin);
+
+	  const stable = [];
+	  const stableKeys = new Set();
+
+	  for (const p of (points || [])) {
+		const v = toNumOrNull(p.coreVoltage ?? p.vcore ?? p.core_voltage);
+		const f = toNumOrNull(p.frequency ?? p.freq ?? p.frequency_mhz);
+		if (v == null || f == null) continue;
+
+		const entry = lookup[keyVF(v, f)];
+		if (!entry) continue;
+
+		const zeroish = isZeroishHashrate(entry.hashrate, entry.expected);
+		const isErrorCell = !!entry.errorReason || zeroish;
+		if (isErrorCell) continue;
+
+		const hr  = toNumOrNull(entry.hashrate);
+		const eff = toNumOrNull(entry.eff);
+		if (hr == null || eff == null) continue;
+
+		const t  = toNumOrNull(entry.chipTemp);
+		const vr = toNumOrNull(entry.vrTemp);
+		const pw = toNumOrNull(entry.power);
+
+		if (tLimit  != null && t  != null && t  > tLimit)  continue;
+		if (vrLimit != null && vr != null && vr > vrLimit) continue;
+		if (pLimit  != null && pw != null && pw > pLimit)  continue;
+
+		const err = toNumOrNull(entry.err);
+		if (err != null && err > errMax) continue;
+
+		const rej = toNumOrNull(entry.reject);
+		if (rej != null && rej > rejMax) continue;
+
+		const k = keyVF(v, f);
+		stableKeys.add(k);
+		stable.push({ k, v, f, hr, eff, err, rej, t, vr, pw });
+	  }
+
+	  stable.sort((a, b) => {
+		if (b.hr !== a.hr) return b.hr - a.hr;            // highest hashrate
+		const ae = a.err ?? 0, be = b.err ?? 0;
+		if (ae !== be) return ae - be;                   // lower errors
+		const ar = a.rej ?? 0, br = b.rej ?? 0;
+		if (ar !== br) return ar - br;                   // lower rejects
+		if (a.eff !== b.eff) return a.eff - b.eff;       // better efficiency
+		const at = a.t ?? 0, bt = b.t ?? 0;
+		if (at !== bt) return at - bt;                   // cooler
+		const ap = a.pw ?? 0, bp = b.pw ?? 0;
+		if (ap !== bp) return ap - bp;                   // lower power
+		return 0;
+	  });
+
+	  return {
+		stableKeys,
+		best: stable[0] || null,
+		limits: { tLimit, vrLimit, pLimit, errMax, rejMax }
+	  };
+	}
+
+	function renderStableSuggestionUI(stable) {
+	  const metaEl = document.getElementById("stableSuggestMeta");
+	  const outEl  = document.getElementById("stableSuggestResult");
+	  if (!metaEl || !outEl) return;
+
+	  const highlightOff = !getStableHighlightEnabled();
+	  const count = stable?.stableKeys?.size ?? 0;
+	  metaEl.textContent = `${count} points meet stability criteria` + (highlightOff ? " (highlighting off)" : "");
+
+	  if (!stable || !stable.best) {
+		outEl.innerHTML = `<span class="muted">No points meet stability criteria.</span>`;
+		return;
+	  }
+
+	  const b = stable.best;
+	  outEl.innerHTML =
+		`Recommend <strong>${fmtNumber(b.hr, 1)} GH/s</strong> @ ` +
+		`<span class="mono">${fmtNumber(b.v, 0)} mV</span> / <span class="mono">${fmtNumber(b.f, 0)} MHz</span>` +
+		` — <span class="mono">${fmtNumber(b.eff, 2)} J/TH</span>` +
+		(b.err != null ? `, err <span class="mono">${fmtNumber(b.err, 2)}%</span>` : ``) +
+		(b.rej != null ? `, reject <span class="mono">${fmtNumber(b.rej, 2)}%</span>` : ``) +
+		(b.pw  != null ? `, <span class="mono">${fmtNumber(b.pw, 2)} W</span>` : ``) +
+		(b.t   != null ? `, chip <span class="mono">${fmtNumber(b.t, 1)}°C</span>` : ``) +
+		(b.vr  != null ? `, VR <span class="mono">${fmtNumber(b.vr, 1)}°C</span>` : ``);
+	}
+
+	function getHeatmapHighlight(lastCtx) {
+	  if (!lastCtx?.stable) return null;
+	  if (!getStableHighlightEnabled()) return null;
+	  return {
+		stableKeys: lastCtx.stable.stableKeys,
+		bestKey: lastCtx.stable.best?.k || null,
+	  };
+	}
+
+	function redrawHeatmapsFromContext() {
+	  if (!lastHeatmapContext) return;
+	  const { voltages, freqs, lookup, rowMeta } = lastHeatmapContext;
+	  const highlight = getHeatmapHighlight(lastHeatmapContext);
+buildSingleHeatmap(heatmapHashContainer, voltages, freqs, lookup, "hashrate", {
+		label: "GH/s",
+		invert: false,
+		decimals: 1,
+	  }, rowMeta, highlight);
+
+	  buildSingleHeatmap(heatmapEffContainer, voltages, freqs, lookup, "eff", {
+		label: "J/TH",
+		invert: true,
+		decimals: 2,
+	  }, rowMeta, highlight);
+
+	  const selectedKey = (heatmapMetricSelect && heatmapMetricSelect.value) || "err";
+	  const metricCfg = HEATMAP_METRICS[selectedKey] || HEATMAP_METRICS.err;
+
+	  if (heatmapMetricLabel) {
+		heatmapMetricLabel.textContent = metricCfg.title;
+	  }
+
+	  buildSingleHeatmap(
+		heatmapErrContainer,
+		voltages,
+		freqs,
+		lookup,
+		metricCfg.key,
+		metricCfg,
+		rowMeta,
+		highlight
+	  );
+
+	  // Update the text meta each redraw so it can reflect "highlighting off"
+	  renderStableSuggestionUI(lastHeatmapContext.stable);
+	}
+
+
+
     function extractPoints(resultsRoot) {
       if (!resultsRoot) return [];
       if (Array.isArray(resultsRoot.points)) return resultsRoot.points;
@@ -565,6 +790,13 @@
 		invert: true,   // lower error = greener
 		decimals: 2,
 	  },
+	  reject: {
+		key: "reject",
+		label: "reject rate (%)",
+		title: "Reject rate (%)",
+		invert: true,
+		decimals: 2,
+	  },
 	  pow: {
 		key: "pow",
 		label: "power (W)",
@@ -606,6 +838,13 @@
 		title: "Expected hash rate (GH/s)",
 		invert: false,
 		decimals: 0,
+	  },
+	  hashPct: {
+		key: "hashPct",
+		label: "hash % of expected (%)",
+		title: "Hash % of expected (%)",
+		invert: false,
+		decimals: 1,
 	  },
 	};
 
@@ -678,11 +917,19 @@
 		const key = `${v}|${f}`;
 		const errorReason = p.errorReason || p.error_reason || null;
 
+		const hashrate = toNumOrNull(p.averageHashRate ?? p.hashRate ?? p.average_hashrate);
+		const expected = toNumOrNull(p.expectedHashRate ?? p.expectedHashrate ?? p.expected_hashrate);
+		const hashPct = (hashrate != null && expected != null && expected > 0)
+		  ? (hashrate / expected) * 100
+		  : null;
+
 		lookup[key] = {
-		  hashrate: toNumOrNull(p.averageHashRate ?? p.hashRate ?? p.average_hashrate),
-		  expected: toNumOrNull(p.expectedHashRate ?? p.expectedHashrate ?? p.expected_hashrate),
+		  hashrate,
+		  expected,
+		  hashPct,
 		  eff:      toNumOrNull(p.efficiencyJTH ?? p.efficiency ?? p.j_per_th),
 		  err:      toNumOrNull(p.errorPercentage ?? p.error_pct ?? p.errorRate),
+		  reject:   toNumOrNull(p.rejectRate ?? p.reject_rate),
 		  errorReason,
 		  // NEW: extra metrics for the selector
 		  pow:     toNumOrNull(p.averagePower ?? p.power ?? p.power_watts),
@@ -703,19 +950,34 @@
 	  });
 	  
 	  // Save context for selector-driven redraws
-	  lastHeatmapContext = { voltages, freqs, lookup, rowMeta };
+	  lastHeatmapContext = { voltages, freqs, lookup, rowMeta, points, cfg, stable: null };
+
+	  // Initialize defaults for the stability controls from config (when present)
+	  const errInput = document.getElementById("stableErrMax");
+	  if (errInput && (run?.config?.error_rate_warn_threshold != null || cfg?.error_rate_warn_threshold != null)) {
+		errInput.value = toNumOrNull(cfg?.error_rate_warn_threshold) ?? errInput.value;
+	  }
+
+	  // Compute & render "suggested stable" candidate set
+	  const stable = computeStableSuggestion(points, cfg, lookup);
+	  lastHeatmapContext.stable = stable;
+	  renderStableSuggestionUI(stable);
+
+	  const highlight = getHeatmapHighlight(lastHeatmapContext);
+
+
 
 	  buildSingleHeatmap(heatmapHashContainer, voltages, freqs, lookup, "hashrate", {
 		label: "GH/s",
 		invert: false,
 		decimals: 1,
-	  }, rowMeta);
+	  }, rowMeta, highlight);
 
 	  buildSingleHeatmap(heatmapEffContainer, voltages, freqs, lookup, "eff", {
 		label: "J/TH",
 		invert: true,
 		decimals: 2,
-	  }, rowMeta);
+	  }, rowMeta, highlight);
 
 	  // Third one uses the selector:
 	  const selectedKey = (heatmapMetricSelect && heatmapMetricSelect.value) || "err";
@@ -732,7 +994,8 @@
 	    lookup,
 	    metricCfg.key,
 	    metricCfg,
-	    rowMeta
+	    rowMeta,
+		highlight
 	  );
 	}
 	
@@ -741,6 +1004,7 @@
 		if (!lastHeatmapContext) return;
 
 		const { voltages, freqs, lookup, rowMeta } = lastHeatmapContext;
+		const highlight = getHeatmapHighlight(lastHeatmapContext);
 		const selectedKey = heatmapMetricSelect.value || "err";
 		const metricCfg = HEATMAP_METRICS[selectedKey] || HEATMAP_METRICS.err;
 
@@ -755,12 +1019,33 @@
 		  lookup,
 		  metricCfg.key,
 		  metricCfg,
-		  rowMeta
+		  rowMeta,
+		  highlight
 		);
+	  });
+
+	// Stability recompute + highlight toggle
+	if (stableApplyBtn) {
+	  stableApplyBtn.addEventListener("click", () => {
+		if (!lastHeatmapContext) return;
+		const { points, cfg, lookup } = lastHeatmapContext;
+		const stable = computeStableSuggestion(points, cfg, lookup);
+		lastHeatmapContext.stable = stable;
+		renderStableSuggestionUI(stable);
+		redrawHeatmapsFromContext();
 	  });
 	}
 
-    function buildSingleHeatmap(container, voltages, freqs, lookup, key, opts, rowMeta) {
+	if (stableHighlightToggle) {
+	  stableHighlightToggle.addEventListener("change", () => {
+		// Just redraw; we keep the suggestion, only toggling outlines.
+		redrawHeatmapsFromContext();
+	  });
+	}
+
+	}
+
+    function buildSingleHeatmap(container, voltages, freqs, lookup, key, opts, rowMeta, highlight) {
 	  const values = [];
 
 	  voltages.forEach((v) => {
@@ -850,7 +1135,19 @@
 				: fmtNumber(baseVal, opts.decimals);
 		  }
 
-		  html += `<td class="${extraClass}" style="background:${bg};"><span class="heatmap-cell-value">${text}</span></td>`;
+		  
+		  // Optional stability highlighting (outlines only)
+		  if (highlight && entry && !isErrorCell) {
+			const k = keyVF(v, f);
+			if (highlight.stableKeys && highlight.stableKeys.has(k)) {
+			  extraClass = extraClass ? (extraClass + " heatmap-stable") : "heatmap-stable";
+			}
+			if (highlight.bestKey && highlight.bestKey === k) {
+			  extraClass = extraClass ? (extraClass + " heatmap-best-stable") : "heatmap-best-stable";
+			}
+		  }
+
+html += `<td class="${extraClass}" style="background:${bg};"><span class="heatmap-cell-value">${text}</span></td>`;
 	    });
 
 	    html += "</tr>";
@@ -884,6 +1181,9 @@
         const fanPct = p.fanSpeed ?? p.fan_pct ?? p.fanspeed;
         const fanRpm = p.fanRPM ?? p.fan_rpm ?? p.fanrpm;
         const errPct = p.errorPct ?? p.error_percentage ?? p.errorPercentage ?? p.error_percent;
+		const rejectPct = p.rejectRate ?? p.reject_rate;
+		const sharesRej = p.sharesRejected ?? p.shares_rejected;
+		const sharesTotal = p.sharesTotal ?? p.shares_total;
 
         const hrClass = idx === bestHashIndex ? "best-hashrate" : "";
         const effClass = idx === bestEffIndex ? "best-efficiency" : "";
@@ -896,7 +1196,10 @@
             <td class="mono ${hrClass}">${fmtNumber(hr, 1)}</td>
             <td class="mono">${fmtNumber(pow, 2)}</td>
             <td class="mono ${effClass}">${fmtNumber(eff, 2)}</td>
-            <td class="mono">${errPct === null || errPct === undefined ? "–" : fmtNumber(errPct, 2)}</td>
+			<td class="mono">${errPct === null || errPct === undefined ? "–" : fmtNumber(errPct, 2)}</td>
+			<td class="mono">${rejectPct === null || rejectPct === undefined ? "–" : fmtNumber(rejectPct, 2)}</td>
+			<td class="mono">${sharesRej === null || sharesRej === undefined ? "–" : fmtNumber(sharesRej, 0)}</td>
+			<td class="mono">${sharesTotal === null || sharesTotal === undefined ? "–" : fmtNumber(sharesTotal, 0)}</td>
             <td class="mono">${fmtNumber(t, 1)}</td>
             <td class="mono">${fmtNumber(vrT, 1)}</td>
             <td class="mono">${fanPct === null || fanPct === undefined ? "–" : fmtNumber(fanPct, 0)}</td>
@@ -916,6 +1219,9 @@
               <th>Power (W)</th>
               <th>J/TH</th>
               <th>Error %</th>
+			  <th>Reject %</th>
+			  <th>Rej shares</th>
+			  <th>Total shares</th>
               <th>°C</th>
               <th>VR °C</th>
               <th>Fan %</th>
