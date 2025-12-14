@@ -683,6 +683,10 @@ class BenchmarkRunner:
                     hashrate_domains = extras.get("hashrateDomains") if extras else None
                     avg_err_pct = extras.get("avgErrorPercentage") if extras else None
                     expected_hash = extras.get("expectedHashrate") if extras else None
+                    reject_rate = extras.get("rejectRate") if extras else None
+                    shares_acc = extras.get("sharesAccepted") if extras else None
+                    shares_rej = extras.get("sharesRejected") if extras else None
+                    shares_total = extras.get("sharesTotal") if extras else None
 
                     # Remember these for the next step's narrative
                     prev_avg_error_pct = avg_err_pct
@@ -705,6 +709,14 @@ class BenchmarkRunner:
                         result["fanRPM"] = avg_fan_rpm       # picked up by UI as fanRPM/fan_rpm/fanrpm
                     if avg_err_pct is not None:
                         result["errorPercentage"] = avg_err_pct
+                    if reject_rate is not None:
+                        result["rejectRate"] = reject_rate
+                    if shares_acc is not None:
+                        result["sharesAccepted"] = shares_acc
+                    if shares_rej is not None:
+                        result["sharesRejected"] = shares_rej
+                    if shares_total is not None:
+                        result["sharesTotal"] = shares_total
                     if hashrate_domains is not None:
                         # full per-ASIC / per-domain stats
                         result["hashrateDomains"] = hashrate_domains
@@ -934,6 +946,14 @@ class BenchmarkRunner:
         fan_rpms: List[float] = []
         error_pcts: List[float] = []
 
+        # Stratum share counters (since boot). We track start/end per step so we can
+        # compute rejection rate for the step (delta-based to be robust even if the
+        # counters aren't perfectly zero right after a reboot).
+        shares_acc_start: Optional[int] = None
+        shares_rej_start: Optional[int] = None
+        shares_acc_end: Optional[int] = None
+        shares_rej_end: Optional[int] = None
+
         # hashrateMonitor domain tracking:
         # domains_samples[asic_index][domain_index] = [samples...]
         domains_samples: List[List[List[float]]] = []
@@ -981,6 +1001,39 @@ class BenchmarkRunner:
             fanrpm = info.get("fanrpm")              # bitaxe field
             error_percentage = info.get("errorPercentage")
             hashrate_monitor = info.get("hashrateMonitor")
+
+            # Shares accepted/rejected (since boot). Prefer top-level keys, but fall
+            # back to stratum.pools[0] if needed.
+            acc_raw = info.get("sharesAccepted")
+            rej_raw = info.get("sharesRejected")
+            if acc_raw is None or rej_raw is None:
+                try:
+                    pools = (info.get("stratum") or {}).get("pools")
+                    if isinstance(pools, list) and pools:
+                        p0 = pools[0] if isinstance(pools[0], dict) else None
+                        if p0:
+                            acc_raw = acc_raw if acc_raw is not None else p0.get("accepted")
+                            rej_raw = rej_raw if rej_raw is not None else p0.get("rejected")
+                except Exception:
+                    # shares are optional; ignore any parsing errors
+                    pass
+
+            try:
+                acc_int = int(acc_raw) if acc_raw is not None else None
+            except Exception:
+                acc_int = None
+            try:
+                rej_int = int(rej_raw) if rej_raw is not None else None
+            except Exception:
+                rej_int = None
+
+            if acc_int is not None and rej_int is not None:
+                if shares_acc_start is None:
+                    shares_acc_start = acc_int
+                if shares_rej_start is None:
+                    shares_rej_start = rej_int
+                shares_acc_end = acc_int
+                shares_rej_end = rej_int
 
             if temp is None or voltage is None:
                 return None, None, None, False, None, "MISSING_TEMP_OR_VOLTAGE", None
@@ -1072,6 +1125,8 @@ class BenchmarkRunner:
                     "fanspeed": fanspeed,
                     "fanrpm": fanrpm,
                     "errorPercentage": error_percentage,
+                    "sharesAccepted": acc_int,
+                    "sharesRejected": rej_int,
                 }
                 # update ETA + global progress using current iteration + sample index
                 self._update_eta(self._iteration_index, i + 1, total_samples)
@@ -1212,6 +1267,28 @@ class BenchmarkRunner:
         # Also record what the expected hashrate was for this point (if known)
         if expected_hashrate is not None:
             extras["expectedHashrate"] = expected_hashrate
+
+        # Shares + reject rate (delta within this step)
+        if (
+            shares_acc_start is not None
+            and shares_rej_start is not None
+            and shares_acc_end is not None
+            and shares_rej_end is not None
+        ):
+            acc_delta = max(0, shares_acc_end - shares_acc_start)
+            rej_delta = max(0, shares_rej_end - shares_rej_start)
+            total_delta = acc_delta + rej_delta
+
+            extras["sharesAcceptedStart"] = shares_acc_start
+            extras["sharesRejectedStart"] = shares_rej_start
+            extras["sharesAcceptedEnd"] = shares_acc_end
+            extras["sharesRejectedEnd"] = shares_rej_end
+            extras["sharesAccepted"] = acc_delta
+            extras["sharesRejected"] = rej_delta
+            extras["sharesTotal"] = total_delta
+
+            if total_delta > 0:
+                extras["rejectRate"] = (rej_delta / total_delta) * 100.0
         # Optional: record what threshold was used for this run
         extras["errorRateWarnThreshold"] = threshold
 
@@ -1530,6 +1607,10 @@ class GridBenchmarkRunner(BenchmarkRunner):
                         avg_err_pct = extras.get("avgErrorPercentage") if extras else None
                         expected_hash = extras.get("expectedHashrate") if extras else None
                         used_threshold = extras.get("errorRateWarnThreshold")
+                        reject_rate = extras.get("rejectRate") if extras else None
+                        shares_acc = extras.get("sharesAccepted") if extras else None
+                        shares_rej = extras.get("sharesRejected") if extras else None
+                        shares_total = extras.get("sharesTotal") if extras else None
 
                         result: Dict[str, Any] = {
                             "coreVoltage": v,
@@ -1548,6 +1629,14 @@ class GridBenchmarkRunner(BenchmarkRunner):
                             result["fanRPM"] = avg_fan_rpm
                         if avg_err_pct is not None:
                             result["errorPercentage"] = avg_err_pct
+                        if reject_rate is not None:
+                            result["rejectRate"] = reject_rate
+                        if shares_acc is not None:
+                            result["sharesAccepted"] = shares_acc
+                        if shares_rej is not None:
+                            result["sharesRejected"] = shares_rej
+                        if shares_total is not None:
+                            result["sharesTotal"] = shares_total
                         if hashrate_domains is not None:
                             result["hashrateDomains"] = hashrate_domains
                         if used_threshold is not None:

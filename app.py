@@ -401,6 +401,10 @@ def api_get_benchmark_csv(run_id: str):
         "efficiencyJTH",
         "fanSpeed",
         "errorPercentage",
+        "rejectRate",
+        "sharesAccepted",
+        "sharesRejected",
+        "sharesTotal",
     ]
 
     output = io.StringIO()
