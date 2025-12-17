@@ -912,11 +912,45 @@ class BenchmarkRunner:
         # restart + wait for stabilization
         self._restart_system(wait=self.config.sleep_time)
 
-    def _restart_system(self, wait: int = 0) -> None:
+    def _restart_system(
+        self,
+        wait: int = 0,
+        poll_timeout: int = 120,
+        poll_interval: int = 5,
+    ) -> None:
+        """Restart the target system, then wait for it to become reachable again.
+
+        Flow:
+          1) POST /api/system/restart
+          2) Sleep for `wait` seconds (stabilization window)
+          3) Poll GET /api/system/info every `poll_interval` seconds for up to
+             `poll_timeout` seconds. If still unreachable, raise TimeoutError.
+        """
         r = requests.post(f"{self.base_url}/api/system/restart", timeout=10)
         r.raise_for_status()
+
         if wait > 0:
             time.sleep(wait)
+
+        if poll_timeout <= 0:
+            return
+
+        deadline = time.time() + poll_timeout
+        last_exc: Optional[Exception] = None
+
+        while time.time() < deadline:
+            try:
+                r = requests.get(f"{self.base_url}/api/system/info", timeout=10)
+                r.raise_for_status()
+                return
+            except requests.exceptions.RequestException as e:
+                last_exc = e
+                time.sleep(poll_interval)
+
+        raise TimeoutError(
+            f"System at {self.base_url} did not become reachable within "
+            f"{poll_timeout}s after restart. Last error: {last_exc}"
+        )
 
     # --- core benchmark iteration ---
 
