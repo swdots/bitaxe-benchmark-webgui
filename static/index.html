@@ -286,6 +286,7 @@
         <div class="sub">Auto-detect, profile-based stress testing for Bitaxe Gamma 602 & NerdQaxe++</div>
       </div>
       <div class="row" style="justify-content:flex-end;">
+        <a class="btn secondary shrink" href="dashboard.html" title="Miner status dashboard">Dashboard</a>
         <button class="btn secondary shrink" id="themeToggle">Toggle theme</button>
       </div>
     </header>
@@ -301,6 +302,9 @@
         <div class="shrink" style="min-width:220px;">
           <label for="ipInput">Target IP</label>
           <input id="ipInput" type="text" placeholder="192.168.x.x" />
+          <div class="hint" style="margin-top:0.35rem;">
+            <select id="knownDeviceSelect"><option value="">Known devices…</option></select>
+          </div>
         </div>
         <div class="shrink" style="min-width:210px;">
           <label>Device type</label>
@@ -421,6 +425,7 @@
     const apiBase = ""; // same origin
 
     const ipInput = document.getElementById("ipInput");
+    const knownDeviceSelect = document.getElementById("knownDeviceSelect");
     const deviceSelect = document.getElementById("deviceSelect");
     const profileSelect = document.getElementById("profileSelect");
     const detectBtn = document.getElementById("detectBtn");
@@ -1438,8 +1443,30 @@
       });
     }
 
-    (async () => {
+    
+    async function loadKnownDevices(){
+      if (!knownDeviceSelect) return;
+      try{
+        const res = await fetch(`${apiBase}/api/dashboard/devices`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const devs = (data.devices || []);
+        knownDeviceSelect.innerHTML = `<option value="">Known devices…</option>` + devs.map(d => {
+          const info = d.last_info || d.last_info_json || d.lastInfo || null;
+          const label = (d.name || info?.hostname || info?.deviceModel || d.ip);
+          const ip = d.ip;
+          return `<option value="${escapeHtml(ip)}">${escapeHtml(label)} — ${escapeHtml(ip)}</option>`;
+        }).join("");
+        knownDeviceSelect.addEventListener("change", () => {
+          const v = knownDeviceSelect.value;
+          if (v) ipInput.value = v;
+        }, { once:false });
+      }catch(_){}
+    }
+
+(async () => {
       populateDeviceSelect();
+      await loadKnownDevices();
       await refreshProfiles();
       await refreshRuns();
       setInterval(refreshRuns, 5000);

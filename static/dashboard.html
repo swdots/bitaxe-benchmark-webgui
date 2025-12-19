@@ -1,0 +1,2533 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <title>Miner Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#050711;
+      --fg:#f9fafb;
+      --title:#cbd5e1;
+      --cardBgPct:92%;
+      --muted:#94a3b8;
+      --accent:#22c55e;
+      --danger:#ef4444;
+      --warn:#f59e0b;
+      --card:#0b1120;
+      --border:#1f2937;
+      --shadow: 0 18px 45px rgba(15,23,42,0.45);
+      --glass: color-mix(in srgb, var(--card) var(--cardBgPct), transparent);
+      --pill: color-mix(in srgb, var(--card) 85%, transparent);
+      --offline:#64748b;
+      --coin:#fbbf24;
+      --coin2:#fde68a;
+    }
+    [data-theme="light"]{
+      --bg:#f9fafb;
+      --fg:#020617;
+      --title:#0f172a;
+      --cardBgPct:92%;
+      --muted:#6b7280;
+      --accent:#16a34a;
+      --danger:#b91c1c;
+      --warn:#b45309;
+      --card:#ffffff;
+      --border:#e5e7eb;
+      --shadow: 0 18px 45px rgba(2,6,23,0.15);
+      --glass: color-mix(in srgb, var(--card) 92%, transparent);
+      --pill: color-mix(in srgb, var(--card) 85%, transparent);
+      --offline:#94a3b8;
+      --coin:#d97706;
+      --coin2:#f59e0b;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      color:var(--fg);
+      background: radial-gradient(circle at top left, #111827 0, var(--bg) 42%);
+      min-height:100vh;
+      overflow-x:hidden;
+    }
+    a{ color:var(--accent); text-decoration:none; }
+    a:hover{ text-decoration:underline; }
+
+    /* Background layers */
+    #bgImageLayer, #bgVideoLayer{
+      position:fixed;
+      inset:0;
+      z-index:-3;
+      pointer-events:none;
+      opacity:0.55;
+      filter:saturate(1.05) contrast(1.05);
+    }
+    #bgImageLayer{
+      background-position:center;
+      background-size:cover;
+      background-repeat:no-repeat;
+      transition: opacity .35s ease;
+    }
+    #bgVideoLayer{
+      display:none;
+      object-fit:cover;
+      width:100%;
+      height:100%;
+      transition: opacity .35s ease;
+    }
+    #vignette{
+      position:fixed;
+      inset:0;
+      z-index:-2;
+      pointer-events:none;
+      background:
+        radial-gradient(circle at center, rgba(0,0,0,0.00), rgba(0,0,0,0.30) 55%, rgba(0,0,0,0.55)),
+        linear-gradient(180deg, rgba(0,0,0,0.20), rgba(0,0,0,0.40));
+      mix-blend-mode:multiply;
+    }
+
+    .page{ max-width: 1320px; margin: 0 auto; padding: 1rem 1rem 3rem; position:relative; z-index:0; }
+    header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:1rem;
+      margin-bottom:0.75rem;
+    }
+    header h1{
+      font-size:1.35rem;
+      margin:0;
+      letter-spacing:0.2px;
+      color:var(--title);
+    }
+    .sub{ font-size:0.85rem; color:var(--muted); margin-top:0.15rem; }
+    .row{ display:flex; gap:0.65rem; flex-wrap:wrap; align-items:center; }
+    .row > *{ flex: 1; }
+    .row > .shrink{ flex: 0 0 auto; }
+
+    .btn{
+      padding:0.42rem 0.82rem;
+      border-radius:999px;
+      border:1px solid transparent;
+      font-size:0.85rem;
+      cursor:pointer;
+      background:var(--accent);
+      color:white;
+      display:inline-flex;
+      align-items:center;
+      gap:0.35rem;
+      user-select:none;
+      box-shadow: 0 8px 18px rgba(34,197,94,0.15);
+    }
+    .btn.secondary{
+      background:transparent;
+      border-color:var(--border);
+      color:var(--fg);
+      box-shadow:none;
+    }
+    .btn.danger{ background:var(--danger); }
+    .btn:disabled{ opacity:0.55; cursor:default; }
+
+    .pill{
+      font-size:0.75rem;
+      border-radius:999px;
+      padding:0.2rem 0.6rem;
+      border:1px solid var(--border);
+      background: var(--pill);
+      color:var(--muted);
+      white-space:nowrap;
+    }
+
+    .pill.testing{
+      border-color: color-mix(in srgb, #ec4899 65%, var(--border));
+      color: #ec4899;
+      background: color-mix(in srgb, #ec4899 14%, transparent);
+      box-shadow: 0 8px 18px rgba(236,72,153,0.12);
+    }
+
+    .card{
+      background: var(--glass);
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      padding: 0.85rem 1rem;
+    }
+
+    .toolbar{
+      display:flex;
+      gap:0.4rem;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:flex-end;
+    }
+    .toolbar .btn{ font-size:0.82rem; padding:0.4rem 0.75rem; }
+
+    .grid{
+      display:grid;
+      gap:0.8rem;
+      margin-top: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .grid.maxcols-1{ grid-template-columns: repeat(1, minmax(260px, 1fr)); }
+    .grid.maxcols-2{ grid-template-columns: repeat(2, minmax(260px, 1fr)); }
+    .grid.maxcols-3{ grid-template-columns: repeat(3, minmax(260px, 1fr)); }
+    .grid.maxcols-4{ grid-template-columns: repeat(4, minmax(260px, 1fr)); }
+    .grid.maxcols-5{ grid-template-columns: repeat(5, minmax(260px, 1fr)); }
+    .grid.maxcols-6{ grid-template-columns: repeat(6, minmax(260px, 1fr)); }
+
+    
+    body.clean-mode #topSection{ display:none; }
+    body.clean-mode .grid{ margin-top: 0.25rem; }
+
+        .rej{ color: var(--danger); font-weight: 800; margin-left: 0.15rem; }
+
+    .miner-card{
+      position:relative;
+      overflow:hidden;
+      cursor:pointer;
+      transition: transform .12s ease, border-color .12s ease;
+    }
+    .miner-card:hover{
+      transform: translateY(-1px);
+      border-color: color-mix(in srgb, var(--border) 60%, var(--accent));
+    }
+
+    
+    .miner-top{
+      display:grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-rows: auto auto auto;
+      column-gap:0.6rem;
+      row-gap:0.35rem;
+      align-items:start;
+      margin-bottom: 0.55rem;
+      padding-bottom: 0.55rem;
+      border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+    }
+    .miner-top .top-divider{
+      grid-column: 1 / -1;
+      height:0;
+      border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+      opacity:0.9;
+    }
+    .miner-top .top-name{
+      grid-column: 1 / 2;
+      margin:0;
+    }
+    .miner-top .statuswrap{
+      grid-column: 2 / 3;
+      margin-right: 2.4rem;
+      display:flex;
+      flex-direction:column;
+      align-items:flex-end;
+      gap:0.25rem;
+    }
+    .miner-top .titlewrap{ min-width:0; }
+    .name{
+      font-size:0.98rem;
+      margin:0;
+      line-height:1.1;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .ip{
+      font-size:0.78rem;
+      color:var(--muted);
+      margin-top:0.12rem;
+      display:flex;
+      gap:0.5rem;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .ipline{
+      font-size:0.78rem;
+      color:var(--muted);
+      margin-top:0.12rem;
+      display:grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      column-gap:0.5rem;
+      align-items:center;
+    }
+	.miner-top .ipline{ grid-column: 1 / -1; }
+    .ipleft{
+      display:flex;
+      gap:0.5rem;
+      align-items:center;
+      flex-wrap:nowrap;
+      min-width:0;
+      flex: 1 1 auto;
+    }
+    .ipright{
+      display:flex;
+      gap:0.35rem;
+      align-items:center;
+      flex-wrap:nowrap;
+      justify-content:flex-end;
+      flex: 0 0 auto;
+    }
+    .ipaddr{
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+    .pill.tiny{ font-size:0.72rem; padding:0.15rem 0.45rem; }
+    .rej-muted{ color: var(--muted); font-weight: 700; margin-left: 0.15rem; }
+
+    .footer-tags{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:0.35rem;
+      align-items:center;
+      min-width:0;
+      width: 100%;
+      max-width: 320px;
+    }
+    .footer-tags .tagwrap{ min-width:0; }
+    .footer-tags .tagwrap.left{ justify-self:start; }
+    .footer-tags .tagwrap.right{ justify-self:end; }
+
+    .mini-compact{
+      display:flex;
+      flex-direction:column;
+      gap: 0.45rem;
+      font-size:0.82rem;
+    }
+
+.mini-compact .kv{
+  display:grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem;
+}
+.mini-compact .kv .v{
+  justify-self:end;
+  text-align:right;
+}
+    .mini-topline{
+      display:grid;
+      grid-template-columns: minmax(0, 1fr) minmax(6.25rem, auto);
+      gap: 0.45rem;
+    }
+    .kv-power{ min-width: 6.75rem; }
+
+    
+.dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--offline);
+  /* ring + soft glow (more "round" looking than a single hard ring) */
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--offline) 22%, transparent),
+    0 0 10px color-mix(in srgb, var(--offline) 18%, transparent);
+  display:inline-block;
+  flex: 0 0 auto;
+}
+.dot.on{
+  background:var(--accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.dot.warn{
+  background:var(--warn);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent),
+    0 0 10px color-mix(in srgb, var(--warn) 30%, transparent);
+}
+.dot.danger{
+  background:var(--danger);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--danger) 22%, transparent),
+    0 0 10px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+
+    .mini{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.45rem 0.65rem;
+      font-size:0.82rem;
+    }
+    .kv{
+      display:flex;
+      align-items:baseline;
+      justify-content:space-between;
+      gap:0.4rem;
+      border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+      padding-bottom:0.25rem;
+      min-height: 1.35rem;
+    }
+    .k{ color:var(--muted); font-size:0.75rem; white-space:nowrap; }
+    .v{ font-weight: 600; white-space:nowrap; }
+    .v.muted{ font-weight: 500; color: var(--muted); }
+
+    .footerline{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:0.6rem;
+      margin-top: 0.6rem;
+      font-size:0.75rem;
+      color:var(--muted);
+    }
+    .tag{
+      display:inline-flex;
+      align-items:center;
+      gap:0.3rem;
+      border:1px solid var(--border);
+      border-radius:999px;
+      padding:0.15rem 0.45rem;
+      background: color-mix(in srgb, var(--card) 75%, transparent);
+    }
+    .tag strong{ color:var(--fg); font-weight:700; font-size:0.74rem; }
+
+    .menuBtn{
+      position:absolute;
+      top:0.55rem;
+      right:0.55rem;
+      width:34px;height:34px;border-radius:12px;
+      border:1px solid var(--border);
+      background: color-mix(in srgb, var(--card) 80%, transparent);
+      color:var(--fg);
+      display:flex;align-items:center;justify-content:center;
+      cursor:pointer;
+      opacity:0.9;
+    }
+    .menuBtn:hover{ opacity:1; border-color: color-mix(in srgb, var(--border) 60%, var(--accent)); }
+    .menu{
+      position:absolute;
+      top: 2.75rem;
+      right: 0.55rem;
+      min-width: 180px;
+      background: color-mix(in srgb, var(--card) 92%, transparent);
+      border:1px solid var(--border);
+      border-radius:14px;
+      box-shadow: var(--shadow);
+      padding: 0.35rem;
+      display:none;
+      z-index:2;
+    }
+    .menu.open{ display:block; }
+    .menu button{
+      width:100%;
+      text-align:left;
+      border:none;
+      background:transparent;
+      color:var(--fg);
+      padding: 0.5rem 0.55rem;
+      border-radius: 10px;
+      cursor:pointer;
+      font-size:0.84rem;
+    }
+    .menu button:hover{ background: color-mix(in srgb, var(--card) 70%, transparent); }
+    .menu button.danger{ color: color-mix(in srgb, var(--danger) 80%, var(--fg)); }
+    .menu .sep{ height:1px; background: var(--border); margin: 0.25rem 0.15rem; opacity:0.8; }
+
+    /* Modal / drawer */
+    .modal-backdrop{
+      position:fixed; inset:0;
+      background: rgba(2,6,23,0.65);
+      backdrop-filter: blur(10px);
+      display:none;
+      z-index:20;
+    }
+    .modal-backdrop.open{ display:block; }
+    .modal{
+      position:fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(980px, calc(100vw - 1.5rem));
+      max-height: min(86vh, 860px);
+      overflow:auto;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--card) 94%, transparent);
+      box-shadow: var(--shadow);
+      padding: 0.9rem 1rem 1rem;
+      display:none;
+      z-index: 21;
+    }
+    .modal.open{ display:block; }
+    .modal-header{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:0.75rem;
+      margin-bottom:0.55rem;
+    }
+    .modal-title{
+      margin:0;
+      font-size:1.05rem;
+      letter-spacing:0.2px;
+    }
+    .closeX{
+      width:36px;height:36px;
+      border-radius: 12px;
+      border:1px solid var(--border);
+      background: transparent;
+      color: var(--fg);
+      cursor:pointer;
+    }
+
+    .tabs{
+      display:flex; gap:0.4rem; flex-wrap:wrap;
+      margin: 0.55rem 0 0.8rem;
+    }
+    .tab{
+      border:1px solid var(--border);
+      background: transparent;
+      color: var(--fg);
+      border-radius: 999px;
+      padding: 0.35rem 0.65rem;
+      cursor:pointer;
+      font-size:0.8rem;
+      opacity:0.9;
+    }
+    .tab.active{
+      background: color-mix(in srgb, var(--accent) 20%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+      opacity:1;
+    }
+    .panel{ display:none; }
+    .panel.active{ display:block; }
+
+    label{ font-size:0.8rem; display:block; margin-bottom:0.25rem; color: var(--muted); }
+    input[type="text"], input[type="number"], input[type="url"], input[type="range"], select, textarea{
+      width:100%;
+      padding:0.42rem 0.55rem;
+      border-radius: 12px;
+      border:1px solid var(--border);
+      background: color-mix(in srgb, var(--bg) 85%, var(--card) 15%);
+      color: var(--fg);
+      font-size:0.86rem;
+    }
+    input[type="color"]{
+      width: 44px; height: 34px;
+      border-radius: 10px;
+      border:1px solid var(--border);
+      background: transparent;
+      padding:0;
+      cursor:pointer;
+    }
+    textarea{ resize:vertical; min-height: 90px; }
+    input:focus, select:focus, textarea:focus{ outline: 1px solid var(--accent); border-color: var(--accent); }
+
+    .hint{ font-size:0.78rem; color: var(--muted); margin-top: 0.2rem; }
+    .divider{ height: 1px; background: var(--border); margin: 0.8rem 0; opacity:0.9; }
+
+    .settings-footer{
+      margin-top: 0.95rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .settings-footer strong{ color: var(--fg); }
+
+    .asset-grid{
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.65rem;
+    }
+    .asset{
+      border:1px solid var(--border);
+      border-radius: 16px;
+      padding: 0.55rem;
+      background: color-mix(in srgb, var(--card) 88%, transparent);
+    }
+    .asset .thumb{
+      width:100%;
+      height: 120px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--bg) 85%, var(--card) 15%);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+      margin-bottom: 0.45rem;
+      position:relative;
+    }
+    .asset video, .asset img{ width:100%; height:100%; object-fit:cover; display:block; }
+    .asset .meta{ font-size:0.78rem; color: var(--muted); line-height:1.25; }
+    .asset .meta strong{ color: var(--fg); }
+    .asset .actions{ margin-top: 0.45rem; display:flex; gap:0.4rem; flex-wrap:wrap; }
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      font-size:0.7rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;
+      border:1px solid var(--border);
+      color: var(--muted);
+      background: color-mix(in srgb, var(--card) 80%, transparent);
+    }
+    .badge.active{
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+
+    /* Scan results */
+    .scan-list{ display:flex; flex-direction:column; gap:0.45rem; }
+    .scan-item{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:0.65rem;
+      border:1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.5rem 0.6rem;
+      background: color-mix(in srgb, var(--card) 88%, transparent);
+    }
+    .scan-left{ display:flex; gap:0.6rem; align-items:center; min-width:0; }
+    .scan-meta{ min-width:0; }
+    .scan-meta strong{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .scan-meta span{ display:block; color:var(--muted); font-size:0.76rem; }
+    .scan-actions{ display:flex; gap:0.35rem; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+
+    /* Drag reorder list */
+    .reorder-list{ display:flex; flex-direction:column; gap:0.4rem; }
+    .reorder-item{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:0.55rem;
+      border:1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.45rem 0.55rem;
+      background: color-mix(in srgb, var(--card) 88%, transparent);
+      cursor: grab;
+    }
+    .reorder-item:active{ cursor:grabbing; }
+    .handle{
+      width: 26px;
+      height: 26px;
+      border-radius: 10px;
+      border:1px solid var(--border);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color: var(--muted);
+      flex: 0 0 auto;
+      user-select:none;
+    }
+    .reorder-text{ min-width:0; }
+    .reorder-text strong{
+      display:block;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      font-size:0.86rem;
+    }
+    .reorder-text span{
+      color:var(--muted);
+      font-size:0.76rem;
+    }
+
+    /* Details view formatting */
+    .section{
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--card) 88%, transparent);
+      border-radius: 16px;
+      padding: 0.65rem 0.75rem;
+      margin-bottom: 0.65rem;
+    }
+    .section h3{
+      margin:0 0 0.35rem;
+      font-size:0.9rem;
+    }
+    .kvgrid{
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap:0.35rem 0.75rem;
+      font-size:0.82rem;
+    }
+    .kvrow{
+      display:flex;
+      justify-content:space-between;
+      gap:0.75rem;
+      padding-bottom:0.2rem;
+      border-bottom: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+      min-height: 1.35rem;
+    }
+    .kvrow .kk{ color:var(--muted); white-space:nowrap; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
+
+    /* Mining celebration */
+    @keyframes cardShake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-2px); }
+      40% { transform: translateX(2px); }
+      60% { transform: translateX(-1px); }
+      80% { transform: translateX(1px); }
+    }
+    .shake{ animation: cardShake 280ms ease-in-out; }
+
+    .coin{
+      position: fixed;
+      left: var(--x, 50%);
+      top: var(--y, 20%);
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      background: radial-gradient(circle at 30% 30%, var(--coin2), var(--coin));
+      box-shadow: 0 12px 26px rgba(0,0,0,0.35);
+      z-index: 60;
+      pointer-events:none;
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.6);
+      animation: coinDrop var(--t, 1800ms) ease-in forwards;
+    }
+    .coin::after{
+      content:"₿";
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      width:100%;
+      height:100%;
+      font-weight: 900;
+      font-size: 0.95rem;
+      color: rgba(2,6,23,0.65);
+      text-shadow: 0 1px 0 rgba(255,255,255,0.25);
+    }
+    @keyframes coinDrop {
+      0% { opacity:0; transform: translate(-50%,-50%) scale(0.55); }
+      10%{ opacity:1; transform: translate(-50%,-70%) scale(1.0); }
+      85%{ opacity:1; transform: translate(-50%, calc(100vh - 44px)) rotate(240deg) scale(0.95); }
+      100%{ opacity:0; transform: translate(-50%, calc(100vh - 24px)) rotate(340deg) scale(0.9); }
+    }
+
+    @media (max-width: 820px){
+      header{ flex-direction:column; align-items:flex-start; }
+      .toolbar{ justify-content:flex-start; }
+      .mini{ grid-template-columns: 1fr; }
+      .grid{ grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <!-- background -->
+  <div id="bgImageLayer"></div>
+  <video id="bgVideoLayer" muted autoplay loop playsinline></video>
+  <div id="vignette"></div>
+
+  <div class="page">
+    <header>
+      <div>
+        <h1>Miner Dashboard</h1>
+        <div class="sub">Live status for NerdQAxe / Bitaxe-style miners</div>
+      </div>
+      <div class="toolbar">
+        <a class="btn secondary" href="index.html" title="Back to benchmark">Benchmark</a>
+        <button class="btn secondary" id="refreshBtn" title="Poll now">Refresh</button>
+        <button class="btn secondary" id="settingsBtn" title="Settings">Settings</button>
+        <button class="btn secondary" id="themeToggle" title="Toggle theme">Toggle theme</button>
+      </div>
+    </header>
+
+    <section class="card" id="topSection">
+      <div class="row" style="justify-content:space-between; align-items:flex-end;">
+        <div style="min-width:260px;">
+          <div class="pill" id="summaryPill">–</div>
+          <div class="sub" id="statusSub" style="margin-top:0.35rem;">–</div>
+        </div>
+
+        <div class="row" style="justify-content:flex-end;">
+          <div class="shrink" style="min-width:180px;">
+            <label for="addIp">Add system (IP)</label>
+            <input id="addIp" type="text" placeholder="192.168.x.x" />
+          </div>
+          <div class="shrink" style="min-width:200px;">
+            <label for="addName">Name (optional)</label>
+            <input id="addName" type="text" placeholder="mithril" />
+          </div>
+          <div class="shrink" style="min-width:130px;">
+            <label>&nbsp;</label>
+            <button class="btn shrink" id="addBtn">Add</button>
+          </div>
+          <div class="shrink" style="min-width:140px;">
+            <label>&nbsp;</label>
+            <button class="btn secondary shrink" id="scanBtn">Scan LAN</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="grid" id="cards"></div>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal-backdrop" id="modalBackdrop"></div>
+
+  <div class="modal" id="settingsModal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <div>
+        <h2 class="modal-title">Dashboard settings</h2>
+        <div class="sub">Poll frequency, layout, animations, thresholds, backgrounds, and sounds.</div>
+      </div>
+      <button class="closeX" id="settingsClose" title="Close">✕</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="general">General</button>
+      <button class="tab" data-tab="layout">Layout</button>
+      <button class="tab" data-tab="devices">Devices</button>
+      <button class="tab" data-tab="thresholds">Thresholds</button>
+      <button class="tab" data-tab="backgrounds">Background</button>
+      <button class="tab" data-tab="sounds">Sound</button>
+      <button class="tab" data-tab="animations">Animations</button>
+    </div>
+
+    <div class="panel active" id="panel_general">
+      <div class="row">
+        <div>
+          <label for="refreshInterval">Update interval (ms)</label>
+          <input id="refreshInterval" type="number" min="500" step="250" />
+          <div class="hint">How often the dashboard asks the backend to poll miners.</div>
+        </div>
+        <div>
+          <label for="requestTimeout">Request timeout (s)</label>
+          <input id="requestTimeout" type="number" min="0.2" step="0.1" />
+          <div class="hint">How long we wait on <span class="mono">/api/system/info</span> before calling it offline.</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row">
+        <div>
+          <label for="scanCidr">Default scan CIDR</label>
+          <input id="scanCidr" type="text" placeholder="192.168.10.0/24" />
+          <div class="hint">Used by “Scan LAN”. (Pro tip: smaller CIDR = faster scan.)</div>
+        </div>
+        <div class="shrink" style="min-width:240px;">
+          <label for="themeSelect">Preferred theme</label>
+          <select id="themeSelect">
+            <option value="dark">Dark (default)</option>
+            <option value="light">Light</option>
+          </select>
+          <div class="hint">Also stored in localStorage as <span class="mono">bb_theme</span> for consistency with other pages.</div>
+        </div>
+        <div class="shrink" style="min-width:240px;">
+          <label for="cleanMode">Dashboard mode</label>
+          <select id="cleanMode">
+            <option value="0">Standard</option>
+            <option value="1">Clean / cards only</option>
+          </select>
+          <div class="hint">Hides the top summary + add/scan controls for a cleaner “wall display”.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel_layout">
+      <div class="row">
+        <div>
+          <label for="maxCols">Max columns (0 = auto)</label>
+          <input id="maxCols" type="number" min="0" max="6" step="1" />
+          <div class="hint">Set a cap for nice “wall display” layouts, or leave 0 for responsive auto-fit.</div>
+        </div>
+        <div>
+          <label for="compactCards">Compact cards</label>
+          <select id="compactCards">
+            <option value="1">On</option>
+            <option value="0">Off</option>
+          </select>
+          <div class="hint">Compact = fewer rows in the collapsed view.</div>
+        </div>
+
+        <div>
+          <label for="hashrateUnits">Hashrate units</label>
+          <select id="hashrateUnits">
+            <option value="GH">GH/s</option>
+            <option value="TH">TH/s</option>
+          </select>
+          <div class="hint">Choose whether hashrate values are displayed in GH/s or TH/s.</div>
+        </div>
+
+        <div>
+          <label for="hashrateDecimals">Hashrate decimals</label>
+          <select id="hashrateDecimals">
+            <option value="0">0</option>
+            <option value="1">1</option>
+            <option value="2">2</option>
+          </select>
+          <div class="hint">Clamp displayed hashrate precision (0–2 decimals).</div>
+        </div>
+
+
+        <div>
+          <label for="cardTransparency">Card transparency</label>
+          <input id="cardTransparency" type="range" min="0" max="90" step="1" />
+          <div class="hint" id="cardTransparencyLabel">–</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel_devices">
+      <div class="row" style="align-items:flex-end;">
+        <div>
+          <label>Rearrange cards (drag & drop)</label>
+          <div class="hint">This affects card order on all screens.</div>
+        </div>
+        <div class="shrink">
+          <button class="btn secondary" id="saveOrderBtn">Save order</button>
+        </div>
+      </div>
+      <div style="height:0.55rem;"></div>
+      <div class="reorder-list" id="reorderList"></div>
+    </div>
+
+    <div class="panel" id="panel_thresholds">
+      <div class="row">
+        <div>
+          <label>Chip temp warn / danger (°C)</label>
+          <div class="row">
+            <input id="chipWarn" type="number" step="0.5" min="0" />
+            <input id="chipDanger" type="number" step="0.5" min="0" />
+          </div>
+          <div class="hint">Card indicator and inline temp colors.</div>
+        </div>
+        <div>
+          <label>Colors</label>
+          <div class="row">
+            <div class="shrink">
+              <label class="hint">Warn</label>
+              <input id="chipWarnColor" type="color" />
+            </div>
+            <div class="shrink">
+              <label class="hint">Danger</label>
+              <input id="chipDangerColor" type="color" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row">
+        <div>
+          <label>VRM temp warn / danger (°C)</label>
+          <div class="row">
+            <input id="vrmWarn" type="number" step="0.5" min="0" />
+            <input id="vrmDanger" type="number" step="0.5" min="0" />
+          </div>
+        </div>
+        <div>
+          <label>Colors</label>
+          <div class="row">
+            <div class="shrink">
+              <label class="hint">Warn</label>
+              <input id="vrmWarnColor" type="color" />
+            </div>
+            <div class="shrink">
+              <label class="hint">Danger</label>
+              <input id="vrmDangerColor" type="color" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row">
+        <div>
+          <label for="offlineGrace">Offline grace (seconds)</label>
+          <input id="offlineGrace" type="number" min="0" step="1" />
+          <div class="hint">If a miner briefly misses a poll, keep it “green” for this many seconds.</div>
+        </div>
+        <div>
+          <label for="hashWarnPct">Hashrate warn (% of 10m)</label>
+          <input id="hashWarnPct" type="number" min="0" step="1" />
+          <div class="hint">If current hashrate drops below this percent of 10m average, show warn dot.</div>
+        </div>
+
+        <div>
+          <label for="rejRedPct">Rejected shares red threshold (%)</label>
+          <input id="rejRedPct" type="number" min="0" step="0.1" />
+          <div class="hint">Rejected shares only turn red if rejected ÷ total shares exceeds this percentage (default 1%).</div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="panel" id="panel_backgrounds">
+      <div class="row" style="align-items:flex-end;">
+        <div>
+          <label>Upload background (image or video)</label>
+          <input id="bgUpload" type="file" accept="image/*,video/*" />
+          <div class="hint">Backgrounds are stored in <span class="mono">data/dashboard_assets/backgrounds</span>.</div>
+        </div>
+        <div class="shrink">
+          <button class="btn secondary" id="refreshBgBtn">Refresh list</button>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="asset-grid" id="bgList"></div>
+    </div>
+
+    <div class="panel" id="panel_sounds">
+      <div class="row" style="align-items:flex-end;">
+        <div>
+          <label>Upload sound (mp3/wav/ogg)</label>
+          <input id="sndUpload" type="file" accept="audio/*" />
+          <div class="hint">Sounds are stored in <span class="mono">data/dashboard_assets/sounds</span>.</div>
+        </div>
+        <div class="shrink">
+          <button class="btn secondary" id="refreshSndBtn">Refresh list</button>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="asset-grid" id="sndList"></div>
+    </div>
+
+    <div class="panel" id="panel_animations">
+      <div class="row">
+        <div>
+          <label>Mining animations</label>
+          <select id="animEnabled">
+            <option value="1">On</option>
+            <option value="0">Off</option>
+          </select>
+          <div class="hint">When a share is accepted, optionally shake the card and drop a coin.</div>
+        </div>
+        <div>
+          <label>Shake on share</label>
+          <select id="shakeEnabled">
+            <option value="1">On</option>
+            <option value="0">Off</option>
+          </select>
+        </div>
+        <div>
+          <label>Coin drop</label>
+          <select id="coinEnabled">
+            <option value="1">On</option>
+            <option value="0">Off</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row">
+        <div>
+          <label>Play sound on share</label>
+          <select id="soundEnabled">
+            <option value="0">Off</option>
+            <option value="1">On</option>
+          </select>
+          <div class="hint">Requires selecting an “active” sound in the Sound tab.</div>
+        </div>
+        <div>
+          <label for="soundVol">Volume</label>
+          <input id="soundVol" type="range" min="0" max="1" step="0.01" />
+          <div class="hint" id="soundVolLabel">–</div>
+        </div>
+
+        <div>
+          <label for="soundPitchJitter">Pitch variation</label>
+          <input id="soundPitchJitter" type="range" min="0" max="0.25" step="0.01" />
+          <div class="hint" id="soundPitchJitterLabel">–</div>
+        </div>
+        <div>
+          <label for="maxCoins">Max coins on screen</label>
+          <input id="maxCoins" type="number" min="0" max="200" step="1" />
+          <div class="hint">Prevents the screen from becoming… financially irresponsible.</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn secondary shrink" id="saveSettingsBtn">Save settings</button>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="row" style="justify-content:flex-end;">
+      <button class="btn secondary shrink" id="saveAllBtn">Save all</button>
+    </div>
+  
+    
+    <div class="settings-footer">
+      <div>Hi! If you like this tool or find it useful and want to buy me a coffee, tips are much appreciated!</div>
+
+      <div style="margin-top:0.55rem; display:flex; gap:0.45rem; flex-wrap:wrap; align-items:center;">
+        <button class="btn secondary" type="button" id="tipBtcBtn">BTC</button>
+        <button class="btn secondary" type="button" id="tipDogeBtn">DOGE</button>
+        <span class="pill" id="tipAddrHint" style="display:none;">Click to copy</span>
+      </div>
+
+      <div class="mono" id="tipAddrBox" style="margin-top:0.45rem; display:none;"></div>
+    </div>
+</div>
+
+  <!-- Scan modal -->
+
+  <div class="modal" id="scanModal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <div>
+        <h2 class="modal-title">Scan for systems</h2>
+        <div class="sub">Search a CIDR for miners that respond to <span class="mono">/api/system/info</span>.</div>
+      </div>
+      <button class="closeX" id="scanClose" title="Close">✕</button>
+    </div>
+
+    <div class="row" style="align-items:flex-end;">
+      <div>
+        <label for="scanInputCidr">CIDR</label>
+        <input id="scanInputCidr" type="text" placeholder="192.168.10.0/24" />
+        <div class="hint">Keep it small for speed (e.g. <span class="mono">/24</span>).</div>
+      </div>
+      <div class="shrink" style="min-width:140px;">
+        <label>&nbsp;</label>
+        <button class="btn secondary shrink" id="scanRunBtn">Scan</button>
+      </div>
+      <div class="shrink" style="min-width:170px;">
+        <label>&nbsp;</label>
+        <button class="btn shrink" id="scanAddBtn" disabled>Add selected</button>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="sub" id="scanStatus">–</div>
+    <div style="height:0.6rem;"></div>
+    <div id="scanResults"></div>
+  </div>
+
+  <!-- Details modal -->
+  <div class="modal" id="detailsModal" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <div>
+        <h2 class="modal-title" id="detailsTitle">–</h2>
+        <div class="sub" id="detailsSubtitle">–</div>
+      </div>
+      <button class="closeX" id="detailsClose" title="Close">✕</button>
+    </div>
+    <div id="detailsBody"></div>
+  </div>
+
+<script>
+(function(){
+  const apiBase = ""; // same origin
+  const root = document.documentElement;
+
+  
+  const headerSub = document.querySelector("header .sub");
+  const DEFAULT_HEADER_SUB = headerSub ? headerSub.textContent.trim() : "Live status for NerdQAxe / Bitaxe-style miners";
+  let lastRefreshText = "";
+
+  function updateHeaderSubtitle(){
+    if (!headerSub) return;
+    if (settings?.clean_mode){
+      headerSub.textContent = lastRefreshText || "Last refresh: –";
+    }else{
+      headerSub.textContent = DEFAULT_HEADER_SUB;
+    }
+  }
+const $ = (id) => document.getElementById(id);
+  const cardsEl = $("cards");
+  const summaryPill = $("summaryPill");
+  const statusSub = $("statusSub");
+  const topSection = $("topSection");
+
+  const themeToggle = $("themeToggle");
+  const settingsBtn = $("settingsBtn");
+  const refreshBtn = $("refreshBtn");
+  const scanBtn = $("scanBtn");
+  const addBtn = $("addBtn");
+  const addIp = $("addIp");
+  const addName = $("addName");
+
+  const backdrop = $("modalBackdrop");
+  const settingsModal = $("settingsModal");
+  const settingsClose = $("settingsClose");
+  const detailsModal = $("detailsModal");
+  const scanModal = $("scanModal");
+  const scanClose = $("scanClose");
+  const scanInputCidr = $("scanInputCidr");
+  const scanRunBtn = $("scanRunBtn");
+  const scanAddBtn = $("scanAddBtn");
+  const scanResults = $("scanResults");
+  const scanStatus = $("scanStatus");
+  const detailsClose = $("detailsClose");
+
+  // Settings inputs
+  const refreshInterval = $("refreshInterval");
+  const requestTimeout = $("requestTimeout");
+  const scanCidr = $("scanCidr");
+  const themeSelect = $("themeSelect");
+  const cleanMode = $("cleanMode");
+
+  const maxCols = $("maxCols");
+  const compactCards = $("compactCards");
+  const hashrateUnits = $("hashrateUnits");
+  const hashrateDecimals = $("hashrateDecimals");
+  const rejRedPct = $("rejRedPct");
+  const cardTransparency = $("cardTransparency");
+  const cardTransparencyLabel = $("cardTransparencyLabel");
+
+  const reorderList = $("reorderList");
+  const saveOrderBtn = $("saveOrderBtn");
+
+  const chipWarn = $("chipWarn");
+  const chipDanger = $("chipDanger");
+  const chipWarnColor = $("chipWarnColor");
+  const chipDangerColor = $("chipDangerColor");
+
+  const vrmWarn = $("vrmWarn");
+  const vrmDanger = $("vrmDanger");
+  const vrmWarnColor = $("vrmWarnColor");
+  const vrmDangerColor = $("vrmDangerColor");
+
+  const offlineGrace = $("offlineGrace");
+  const hashWarnPct = $("hashWarnPct");
+
+  const bgUpload = $("bgUpload");
+  const bgList = $("bgList");
+  const refreshBgBtn = $("refreshBgBtn");
+
+  const sndUpload = $("sndUpload");
+  const sndList = $("sndList");
+  const refreshSndBtn = $("refreshSndBtn");
+
+  const animEnabled = $("animEnabled");
+  const shakeEnabled = $("shakeEnabled");
+  const coinEnabled = $("coinEnabled");
+  const soundEnabled = $("soundEnabled");
+  const soundVol = $("soundVol");
+  const soundVolLabel = $("soundVolLabel");
+  const soundPitchJitter = $("soundPitchJitter");
+  const soundPitchJitterLabel = $("soundPitchJitterLabel");
+  const maxCoins = $("maxCoins");
+
+  const saveSettingsBtn = $("saveSettingsBtn");
+  const saveAllBtn = $("saveAllBtn");
+
+  // tips footer
+  const tipBtcBtn = $("tipBtcBtn");
+  const tipDogeBtn = $("tipDogeBtn");
+  const tipAddrBox = $("tipAddrBox");
+  const tipAddrHint = $("tipAddrHint");
+  const TIP_BTC = "bc1qa2m3ggt0mygtyzslvs2a96df7kx2te3nqv2szp";
+  const TIP_DOGE = "DJsZUqUYEBP99MvpCVxxZKqEdV6GqBWpEs";
+  let tipShown = "";
+
+  const detailsTitle = $("detailsTitle");
+  const detailsSubtitle = $("detailsSubtitle");
+  const detailsBody = $("detailsBody");
+
+  // background layers
+  const bgImageLayer = $("bgImageLayer");
+  const bgVideoLayer = $("bgVideoLayer");
+
+  // state
+  let settings = null;
+  let devices = [];
+  let deviceState = new Map(); // id -> { lastSharesAccepted, lastSeenMs, lastInfo }
+  let pollTimer = null;
+  let pollInFlight = false;
+  let activeSoundUrl = null;
+  let activeSoundEl = null;
+  let coinCount = 0;
+
+  function escapeHtml(str){
+    if (str == null) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function fmtFixedTrim(n, decimals){
+    if (n == null || !isFinite(Number(n))) return "–";
+    const s = Number(n).toFixed(decimals);
+    return s.replace(/\.0+$/,"").replace(/(\.\d*[1-9])0+$/,"$1");
+  }
+
+  function fmtNum(n, digits=1){
+    if (n == null || !isFinite(Number(n))) return "–";
+    return Number(n).toFixed(digits);
+  }
+
+  function fmtInt(n){
+    if (n == null || !isFinite(Number(n))) return "–";
+    return String(Math.round(Number(n)));
+  }
+
+  function fmtSI(n, digits=2){
+    if (n == null) return "–";
+    const x = Number(n);
+    if (!isFinite(x)) return String(n);
+    const abs = Math.abs(x);
+    const units = [["T",1e12],["G",1e9],["M",1e6],["K",1e3]];
+    for (const [suf, v] of units){
+      if (abs >= v){
+        const val = x / v;
+        const d = abs >= 10*v ? 1 : digits;
+        return val.toFixed(d).replace(/\.0+$/,"").replace(/(\.\d*[1-9])0+$/,"$1") + suf;
+      }
+    }
+    return String(Math.round(x));
+  }
+
+  function agoSeconds(tsIso){
+    if (!tsIso) return null;
+    const t = Date.parse(tsIso);
+    if (!isFinite(t)) return null;
+    return Math.max(0, Math.floor((Date.now() - t) / 1000));
+  }
+
+  function applyAppearance(){
+    if (!settings) return;
+    document.body.classList.toggle("clean-mode", !!settings.clean_mode);
+    const tr = Number(settings.card_transparency_pct ?? 8);
+    const t = Math.max(0, Math.min(90, tr));
+    document.documentElement.style.setProperty("--cardBgPct", `${Math.max(5, 100 - t)}%`);
+    updateHeaderSubtitle();
+  }
+
+  function fmtAgo(tsIso){
+    if (!tsIso) return "never";
+    const t = Date.parse(tsIso);
+    if (!isFinite(t)) return tsIso;
+    const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 48) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+  }
+
+  function setTheme(theme){
+    root.setAttribute("data-theme", theme);
+    localStorage.setItem("bb_theme", theme);
+  }
+
+  function loadTheme(){
+    const stored = localStorage.getItem("bb_theme");
+    setTheme(stored || "dark");
+  }
+
+  themeToggle.addEventListener("click", () => {
+    const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    setTheme(next);
+    if (settings){
+      settings.theme = next;
+      themeSelect.value = next;
+      saveSettings({ theme: next });
+    }
+  });
+
+  function openModal(which){
+    backdrop.classList.add("open");
+    which.classList.add("open");
+  }
+  function closeModal(which){
+    which.classList.remove("open");
+    if (!settingsModal.classList.contains("open") && !detailsModal.classList.contains("open")){
+      backdrop.classList.remove("open");
+    }
+  }
+  backdrop.addEventListener("click", () => {
+    closeModal(settingsModal);
+    closeModal(detailsModal);
+  });
+  settingsBtn.addEventListener("click", () => openModal(settingsModal));
+  settingsClose.addEventListener("click", () => closeModal(settingsModal));
+  detailsClose.addEventListener("click", () => closeModal(detailsModal));
+  scanClose.addEventListener("click", () => closeModal(scanModal));
+
+  // Tabs
+  document.querySelectorAll(".tab").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tab = btn.getAttribute("data-tab");
+      document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+      const target = document.getElementById("panel_" + tab);
+      if (target) target.classList.add("active");
+    });
+  });
+
+  function applyGridColumns(){
+    if (!settings) return;
+    const max = Number(settings.max_columns || 0);
+    cardsEl.classList.remove("maxcols-1","maxcols-2","maxcols-3","maxcols-4","maxcols-5","maxcols-6");
+    if (max >= 1 && max <= 6){
+      cardsEl.classList.add("maxcols-" + max);
+    }
+  }
+
+  function getThresholds(){
+    const t = (settings && settings.thresholds) ? settings.thresholds : {};
+    return {
+      chipWarn: Number(t?.chip_temp?.warn ?? 60),
+      chipDanger: Number(t?.chip_temp?.danger ?? 70),
+      chipWarnColor: t?.chip_temp?.warn_color ?? "#f59e0b",
+      chipDangerColor: t?.chip_temp?.danger_color ?? "#ef4444",
+      vrmWarn: Number(t?.vrm_temp?.warn ?? 70),
+      vrmDanger: Number(t?.vrm_temp?.danger ?? 85),
+      vrmWarnColor: t?.vrm_temp?.warn_color ?? "#f59e0b",
+      vrmDangerColor: t?.vrm_temp?.danger_color ?? "#ef4444",
+      offlineGrace: Number(t?.offline?.grace_s ?? 15),
+      hashWarnPct: Number(t?.hashrate?.warn_pct_of_10m ?? 70),
+    };
+  }
+
+  function dotClassFor(info, online, lastSeenIso){
+    const th = getThresholds();
+
+    if (!online){
+      // grace window: if last_seen is recent, keep it green-ish
+      const lastSeen = lastSeenIso ? Date.parse(lastSeenIso) : NaN;
+      if (isFinite(lastSeen) && ((Date.now() - lastSeen)/1000) <= th.offlineGrace){
+        return "dot on";
+      }
+      return "dot";
+    }
+    // temps
+    const chip = Number(info?.temp);
+    const vrm = Number(info?.vrTemp);
+    let worst = 0; // 0 ok, 1 warn, 2 danger
+    if (isFinite(chip)){
+      if (chip >= th.chipDanger) worst = Math.max(worst, 2);
+      else if (chip >= th.chipWarn) worst = Math.max(worst, 1);
+    }
+    if (isFinite(vrm)){
+      if (vrm >= th.vrmDanger) worst = Math.max(worst, 2);
+      else if (vrm >= th.vrmWarn) worst = Math.max(worst, 1);
+    }
+    // hashrate warn vs 10m
+    const hr = Number(info?.hashRate);
+    const hr10 = Number(info?.hashRate_10m);
+    if (isFinite(hr) && isFinite(hr10) && hr10 > 0){
+      const pct = (hr / hr10) * 100;
+      if (pct < th.hashWarnPct){
+        worst = Math.max(worst, 1);
+      }
+    }
+    if (worst === 2) return "dot danger";
+    if (worst === 1) return "dot warn";
+    return "dot on";
+  }
+
+  function efficiencyJTH(info){
+    const hr = Number(info?.hashRate);
+    const p = Number(info?.power);
+    if (!isFinite(hr) || !isFinite(p) || hr <= 0) return null;
+    // hashRate is typically GH/s; J/TH = W / TH/s = W / (GH/s / 1000) = 1000*W/GH/s
+    return (1000 * p) / hr;
+  }
+
+  
+  function formatHashrate(vGh){
+    const v = Number(vGh);
+    if (!isFinite(v)) return "–";
+    const unit = String(settings?.hashrate_unit || "GH").toUpperCase();
+    const decimals = Math.max(0, Math.min(2, Number(settings?.hashrate_decimals ?? 2)));
+    if (unit === "TH"){
+      const th = v / 1000;
+      return `${fmtFixedTrim(th, decimals)} TH/s`;
+    }
+    return `${fmtFixedTrim(v, decimals)} GH/s`;
+  }
+
+  function formatFanSpeed(v){
+    const n = Number(v);
+    if (!isFinite(n)) return "–";
+    // most miners report percent 0–100; if it's larger, assume RPM
+    if (n > 200) return `${fmtInt(n)} RPM`;
+    return `${fmtInt(n)}%`;
+  }
+function maybeColorTempSpan(val, warn, danger, warnColor, dangerColor){
+    if (val == null || !isFinite(Number(val))) return `<span class="v muted">–</span>`;
+    const x = Number(val);
+    let color = "";
+    if (x >= danger) color = `style="color:${dangerColor}"`;
+    else if (x >= warn) color = `style="color:${warnColor}"`;
+    return `<span class="v" ${color}>${fmtNum(x,1)}°C</span>`;
+  }
+
+  function summarize(info){
+    const model = info?.deviceModel || info?.ASICModel || "Miner";
+    const host = info?.hostname || "–";
+    const asics = info?.asicCount != null ? `${info.asicCount} ASIC` : "";
+    const ver = info?.version || "";
+    return `${host} • ${model}${asics ? " • " + asics : ""}${ver ? " • " + ver : ""}`;
+  }
+
+  function cardHtml(dev){
+    const info = dev.info || null;
+    const name = dev.name || info?.hostname || info?.deviceModel || dev.ip;
+    const ip = dev.ip;
+    const online = !!dev.online;
+    const lastSeen = dev.last_seen || dev.lastSeen || null;
+    const lastPoll = dev.last_poll || dev.lastPoll || null;
+
+    const hr = info ? Number(info.hashRate) : NaN;
+    const chip = info ? Number(info.temp) : NaN;
+    const vrm = info ? Number(info.vrTemp) : NaN;
+    const fan = info ? Number(info.fanspeed ?? info.fanSpeed ?? info.fan_speed ?? info.fan_rpm ?? info.fanRPM ?? info.fanrpm) : NaN;
+    const pwr = info ? Number(info.power) : NaN;
+    const eff = info ? efficiencyJTH(info) : null;
+
+    const shares = info ? (info.sharesAccepted ?? info.shares_accepted ?? info.shares ?? info.accepted) : null;
+    const sharesRej = info ? (info.sharesRejected ?? info.shares_rejected ?? info.rejected ?? null) : null;
+        const _acc = (shares != null) ? Number(shares) : NaN;
+    const _rej = (sharesRej != null) ? Number(sharesRej) : NaN;
+    const _tot = (isFinite(_acc) && isFinite(_rej)) ? (_acc + _rej) : NaN;
+    const rejPct = (isFinite(_tot) && _tot > 0) ? (100 * _rej / _tot) : null;
+    const rejThresh = Number(settings?.rejected_share_red_threshold_pct ?? 1);
+    const rejIsBad = (rejPct != null && rejPct > rejThresh);
+
+const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) : null;
+    const errPct = info ? (info.errorPercentage ?? info.error_percentage ?? null) : null;
+
+    const dot = dotClassFor(info, online, dev.last_seen || dev.lastSeen);
+
+    const compact = !!settings?.compact_cards;
+
+    // compact view keeps only the essentials
+    const vrmTempHtml = maybeColorTempSpan(vrm, th().vrmWarn, th().vrmDanger, th().vrmWarnColor, th().vrmDangerColor);
+    const fanInline = (isFinite(fan))
+      ? `<span class="v muted">•</span><span class="v">${formatFanSpeed(fan)}</span>`
+      : ``;
+    const vrmWithFan = `<span style="display:inline-flex; gap:0.3rem; align-items:baseline; justify-content:flex-end;">${vrmTempHtml}${fanInline}</span>`;
+
+    const rows = compact ? `
+      <div class="mini-compact">
+        <div class="mini-topline">
+          <div class="kv"><span class="k">Hashrate</span><span class="v">${formatHashrate(hr)}</span></div>
+          <div class="kv kv-power"><span class="k">Power</span><span class="v">${isFinite(pwr) ? fmtNum(pwr,1) + " W" : "–"}</span></div>
+        </div>
+
+        <div class="mini-topline">
+          <div class="kv"><span class="k">ASIC</span>${maybeColorTempSpan(chip, th().chipWarn, th().chipDanger, th().chipWarnColor, th().chipDangerColor)}</div>
+          <div class="kv kv-power"><span class="k">VRM</span>${maybeColorTempSpan(vrm, th().vrmWarn, th().vrmDanger, th().vrmWarnColor, th().vrmDangerColor)}</div>
+        </div>
+
+        <div class="kv"><span class="k">Fan</span><span class="v">${formatFanSpeed(fan)}</span></div>
+      </div>
+    ` : `
+      <div class="mini">
+        <div class="kv"><span class="k">Hashrate</span><span class="v">${formatHashrate(hr)}</span></div>
+        <div class="kv"><span class="k">10m</span><span class="v">${formatHashrate(info && isFinite(Number(info.hashRate_10m)) ? Number(info.hashRate_10m) : NaN)}</span></div>
+        <div class="kv"><span class="k">Chip</span>${maybeColorTempSpan(chip, th().chipWarn, th().chipDanger, th().chipWarnColor, th().chipDangerColor)}</div>
+        <div class="kv"><span class="k">VRM</span>${maybeColorTempSpan(vrm, th().vrmWarn, th().vrmDanger, th().vrmWarnColor, th().vrmDangerColor)}</div>
+        <div class="kv"><span class="k">Fan</span><span class="v">${formatFanSpeed(fan)}</span></div>
+        <div class="kv"><span class="k">Efficiency</span><span class="v">${eff != null ? fmtNum(eff,2) + " J/TH" : "–"}</span></div>
+        <div class="kv"><span class="k">Power</span><span class="v">${isFinite(pwr) ? fmtNum(pwr,1) + " W" : "–"}</span></div>
+        <div class="kv"><span class="k">Shares</span><span class="v">${shares != null ? fmtInt(shares) : "–"}</span></div>
+      </div>
+    `;
+    const latest = dev.latest_benchmark || dev.latestBenchmark || null;
+    const latestStatus = (latest && latest.status != null) ? String(latest.status).toLowerCase() : "";
+    const isFinished = !!(latest && latest.finished_at);
+    const hasStarted = !!(latest && latest.started_at);
+    const isTesting = online && latest && hasStarted && !isFinished && !["done","complete","completed","failed","canceled","cancelled","error"].includes(latestStatus);
+    const latestBadge = (!compact && latest && latest.id) ? `<span class="badge">latest bench: <strong class="mono">${escapeHtml(latest.id)}</strong></span>` : ``;
+
+    const seenText = (() => {
+      if (!online) return `Offline • last seen ${fmtAgo(lastSeen)}`;
+      const s = agoSeconds(lastPoll);
+      return (s != null && s > 0) ? `Updated ${fmtAgo(lastPoll)}` : "";
+    })();
+
+    const bestDiffText = bestDiff != null ? `<span class="tag"><span class="k">Best</span> <strong>${fmtSI(bestDiff)}</strong></span>` : "";
+    const errText = (errPct != null && isFinite(Number(errPct))) ? `<span class="tag"><span class="k">Err</span> <strong>${fmtNum(errPct,1)}%</strong></span>` : "";
+
+    const sharesText = shares != null ? `<span class="tag"><span class="k">Shares</span> <strong>${fmtInt(shares)}${(sharesRej != null && Number(sharesRej) > 0) ? `<span class="${rejIsBad ? "rej" : "rej-muted"}">(${fmtInt(sharesRej)})</span>` : ``}</strong></span>` : "";
+
+    return `
+      <div class="card miner-card" data-id="${dev.id}">
+        <button class="menuBtn" title="Menu" data-menu="${dev.id}">⋯</button>
+        <div class="menu" id="menu_${dev.id}">
+          <button data-action="details" data-id="${dev.id}">View details</button>
+          <button data-action="copyip" data-ip="${escapeHtml(ip)}">Copy IP</button>
+          <div class="sep"></div>
+          <button class="danger" data-action="remove" data-id="${dev.id}">Remove system</button>
+        </div>
+
+        
+        <div class="miner-top">
+          <h3 class="name top-name">${escapeHtml(name)}</h3>
+
+          <div class="statuswrap">
+            <span class="pill ${isTesting ? "testing" : ""}">${isTesting ? "Testing" : (online ? "Online" : "Offline")}</span>
+            ${latestBadge}
+          </div>
+
+          <div class="top-divider"></div>
+
+          <div class="ipline">
+            <div class="ipleft">
+              <span class="${dot}"></span>
+              <span class="mono ipaddr">${escapeHtml(ip)}</span>
+            </div>
+            <div class="ipright">
+              ${info?.wifiRSSI != null ? `<span class="pill tiny">RSSI ${fmtInt(info.wifiRSSI)}</span>` : ``}
+              ${info?.deviceModel ? `<span class="pill tiny">${escapeHtml(info.deviceModel)}</span>` : ``}
+            </div>
+          </div>
+        </div>
+
+        ${rows}
+
+        <div class="footerline">
+          <span>${escapeHtml(seenText)}</span>
+          <span class="footer-tags">
+            <span class="tagwrap left">${sharesText || ""}</span>
+            <span class="tagwrap right">${bestDiffText || ""}</span>
+          </span>
+        </div>
+      </div>
+    `;
+  }
+
+  function th(){ return getThresholds(); }
+
+  function bindCardInteractions(){
+    // clicking card opens details (but not when clicking menu)
+    document.querySelectorAll(".miner-card").forEach(card => {
+      card.addEventListener("click", (e) => {
+        const tgt = e.target;
+        if (tgt && (tgt.closest(".menuBtn") || tgt.closest(".menu"))) return;
+        const id = Number(card.getAttribute("data-id"));
+        const dev = devices.find(d => d.id === id);
+        if (dev) openDetails(dev);
+      });
+    });
+
+    // menu toggles
+    document.querySelectorAll("[data-menu]").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute("data-menu");
+        const menu = document.getElementById("menu_" + id);
+        if (!menu) return;
+        // close others
+        document.querySelectorAll(".menu").forEach(m => { if (m !== menu) m.classList.remove("open"); });
+        menu.classList.toggle("open");
+      });
+    });
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".menu").forEach(m => m.classList.remove("open"));
+    });
+
+    // menu actions
+    document.querySelectorAll(".menu button").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const act = btn.getAttribute("data-action");
+        const id = Number(btn.getAttribute("data-id") || "0");
+        if (act === "remove"){
+          if (!confirm("Remove this system from the dashboard?")) return;
+          await removeDevice(id);
+          return;
+        }
+        if (act === "copyip"){
+          const ip = btn.getAttribute("data-ip");
+          try{ await navigator.clipboard.writeText(ip); }catch(_){}
+          btn.textContent = "Copied ✓";
+          setTimeout(() => (btn.textContent = "Copy IP"), 900);
+          return;
+        }
+        if (act === "details"){
+          const dev = devices.find(d => d.id === id);
+          if (dev) openDetails(dev);
+          return;
+        }
+      });
+    });
+  }
+
+  function kvRow(k, v){
+    return `<div class="kvrow"><span class="kk">${escapeHtml(k)}</span><span class="vv">${v}</span></div>`;
+  }
+
+  function section(title, innerHtml){
+    return `<div class="section"><h3>${escapeHtml(title)}</h3>${innerHtml}</div>`;
+  }
+
+  function openDetails(dev){
+    const info = dev.info || null;
+    const online = !!dev.online;
+    const name = dev.name || info?.hostname || info?.deviceModel || dev.ip;
+    detailsTitle.textContent = name;
+    detailsSubtitle.innerHTML = `${online ? "Online" : "Offline"} • <span class="mono">${escapeHtml(dev.ip)}</span> • ${dev.last_poll ? "polled " + escapeHtml(fmtAgo(dev.last_poll)) : ""}`;
+
+    const eff = info ? efficiencyJTH(info) : null;
+    const uptime = info?.uptimeSeconds != null ? `${fmtInt(info.uptimeSeconds)} s` : "–";
+
+    const latest = dev.latest_benchmark || null;
+    const latestLink = (latest && latest.id)
+      ? `<a class="btn secondary" style="padding:0.35rem 0.65rem; font-size:0.78rem;" href="details.html?run=${encodeURIComponent(latest.id)}">Latest benchmark</a>`
+      : `<span class="pill">No benchmarks yet</span>`;
+
+    let top = `<div class="row" style="justify-content:space-between; align-items:center;">
+      <div class="pill">${online ? "Connected" : "Offline"} • last seen ${escapeHtml(fmtAgo(dev.last_seen))}</div>
+      <div class="row" style="justify-content:flex-end;">
+        ${latestLink}
+        <a class="btn secondary" style="padding:0.35rem 0.65rem; font-size:0.78rem;" href="index.html">Run benchmark</a>
+      </div>
+    </div>`;
+
+    const mining = info ? `
+      <div class="kvgrid">
+        ${kvRow("Hashrate (now)", `<strong>${formatHashrate(Number(info.hashRate))}</strong>`)}
+        ${kvRow("Hashrate (1m)", `${formatHashrate(Number(info.hashRate_1m))}`)}
+        ${kvRow("Hashrate (10m)", `${formatHashrate(Number(info.hashRate_10m))}`)}
+        ${kvRow("Hashrate (1h)", `${formatHashrate(Number(info.hashRate_1h))}`)}
+        ${kvRow("Power", `<strong>${fmtNum(info.power,1)} W</strong>`)}
+        ${kvRow("Efficiency", `<strong>${eff != null ? fmtNum(eff,2) + " J/TH" : "–"}</strong>`)}
+        ${kvRow("Shares accepted", `${fmtInt(info.sharesAccepted)}`)}
+        ${kvRow("Shares rejected", `${fmtInt(info.sharesRejected)}`)}
+        ${kvRow("Best diff (ever)", `${escapeHtml(info.bestDiff ?? "–")}`)}
+        ${kvRow("Best session diff", `${escapeHtml(info.bestSessionDiff ?? "–")}`)}
+        ${kvRow("Found blocks", `${fmtInt(info.foundBlocks)}`)}
+      </div>
+    ` : `<div class="hint">No data (offline or unreachable).</div>`;
+
+    const therm = info ? `
+      <div class="kvgrid">
+        ${kvRow("Chip temp", `<strong>${fmtNum(info.temp,1)} °C</strong>`)}
+        ${kvRow("VRM temp", `<strong>${fmtNum(info.vrTemp,1)} °C</strong>`)}
+        ${kvRow("PID target", `${fmtNum(info.pidTargetTemp,1)} °C`)}
+        ${kvRow("Fan speed", `${fmtInt(info.fanspeed)} %`)}
+        ${kvRow("Fan RPM", `${fmtInt(info.fanrpm)}`)}
+        ${kvRow("ASIC temps", `${Array.isArray(info.asicTemps) ? escapeHtml(info.asicTemps.join(", ")) : "–"}`)}
+      </div>
+    ` : `<div class="hint">–</div>`;
+
+    const electrical = info ? `
+      <div class="kvgrid">
+        ${kvRow("Core voltage (set)", `${fmtInt(info.coreVoltage)} mV`)}
+        ${kvRow("Core voltage (actual)", `${fmtInt(info.coreVoltageActual)} mV`)}
+        ${kvRow("Input voltage", `${fmtNum(info.voltage,0)} mV`)}
+        ${kvRow("Current", `${fmtNum(info.current,0)} mA`)}
+        ${kvRow("Power", `${fmtNum(info.power,1)} W`)}
+        ${kvRow("Power min/max", `${fmtNum(info.minPower,1)} / ${fmtNum(info.maxPower,1)} W`)}
+      </div>
+    ` : `<div class="hint">–</div>`;
+
+    const network = info ? `
+      <div class="kvgrid">
+        ${kvRow("Hostname", `<span class="mono">${escapeHtml(info.hostname ?? "–")}</span>`)}
+        ${kvRow("Host IP", `<span class="mono">${escapeHtml(info.hostip ?? dev.ip)}</span>`)}
+        ${kvRow("MAC", `<span class="mono">${escapeHtml(info.macAddr ?? "–")}</span>`)}
+        ${kvRow("WiFi SSID", `${escapeHtml(info.ssid ?? "–")}`)}
+        ${kvRow("WiFi RSSI", `${fmtInt(info.wifiRSSI)}`)}
+        ${kvRow("WiFi status", `${escapeHtml(info.wifiStatus ?? "–")}`)}
+        ${kvRow("Uptime", `${escapeHtml(uptime)}`)}
+        ${kvRow("Version", `<span class="mono">${escapeHtml(info.version ?? "–")}</span>`)}
+      </div>
+    ` : `<div class="hint">–</div>`;
+
+    const pool = info ? `
+      <div class="kvgrid">
+        ${kvRow("Stratum URL", `<span class="mono">${escapeHtml(info.stratumURL ?? "–")}</span>`)}
+        ${kvRow("Stratum port", `${fmtInt(info.stratumPort)}`)}
+        ${kvRow("Stratum user", `<span class="mono">${escapeHtml(info.stratumUser ?? "–")}</span>`)}
+        ${kvRow("Difficulty", `${fmtInt(info.poolDifficulty)}`)}
+        ${kvRow("Best diff", `${escapeHtml(info.bestDiff ?? "–")}`)}
+      </div>
+      <div class="hint" style="margin-top:0.35rem;">(More pool stats are available in raw JSON below.)</div>
+    ` : `<div class="hint">–</div>`;
+
+    const raw = info ? `<pre class="mono" style="white-space:pre-wrap; font-size:0.75rem; color:var(--muted); margin:0;">${escapeHtml(JSON.stringify(info, null, 2))}</pre>` : "";
+
+    detailsBody.innerHTML =
+      top +
+      section("Mining", mining) +
+      section("Thermals & fan", therm) +
+      section("Electrical", electrical) +
+      section("Network & firmware", network) +
+      section("Pool / stratum", pool) +
+      (raw ? section("Raw JSON", raw) : "");
+
+    openModal(detailsModal);
+  }
+
+  async function apiJson(url, opts){
+    const res = await fetch(url, opts);
+    if (!res.ok){
+      let msg = `HTTP ${res.status}`;
+      try{ msg = (await res.text()) || msg; }catch(_){}
+      throw new Error(msg);
+    }
+    return await res.json();
+  }
+
+  async function loadSettings(){
+    const data = await apiJson(`${apiBase}/api/dashboard/settings`);
+    settings = data.settings || {};
+    // Apply to theme (keep in sync with other pages)
+    setTheme(localStorage.getItem("bb_theme") || settings.theme || "dark");
+    themeSelect.value = root.getAttribute("data-theme");
+    if (cleanMode) cleanMode.value = settings.clean_mode ? "1" : "0";
+    if (cardTransparency){
+      const tr = Number(settings.card_transparency_pct ?? 8);
+      cardTransparency.value = String(tr);
+      if (cardTransparencyLabel) cardTransparencyLabel.textContent = `${fmtInt(tr)}%`;
+    }
+
+    // Fill UI
+    refreshInterval.value = settings.refresh_interval_ms ?? 5000;
+    requestTimeout.value = settings.request_timeout_s ?? 1.2;
+    scanCidr.value = settings.scan_default_cidr ?? "192.168.1.0/24";
+
+    maxCols.value = settings.max_columns ?? 0;
+    compactCards.value = settings.compact_cards ? "1" : "0";
+    if (hashrateUnits) hashrateUnits.value = String(settings.hashrate_unit || "GH");
+    if (hashrateDecimals) hashrateDecimals.value = String(settings.hashrate_decimals ?? 2);
+    if (rejRedPct) rejRedPct.value = String(settings.rejected_share_red_threshold_pct ?? 1);
+
+    const t = getThresholds();
+    chipWarn.value = t.chipWarn;
+    chipDanger.value = t.chipDanger;
+    chipWarnColor.value = t.chipWarnColor;
+    chipDangerColor.value = t.chipDangerColor;
+
+    vrmWarn.value = t.vrmWarn;
+    vrmDanger.value = t.vrmDanger;
+    vrmWarnColor.value = t.vrmWarnColor;
+    vrmDangerColor.value = t.vrmDangerColor;
+
+    offlineGrace.value = t.offlineGrace;
+    hashWarnPct.value = t.hashWarnPct;
+
+    const anim = settings.animations || {};
+    animEnabled.value = anim.enabled ? "1" : "0";
+    shakeEnabled.value = anim.shake_on_share ? "1" : "0";
+    coinEnabled.value = anim.coin_drop ? "1" : "0";
+    soundEnabled.value = anim.sound_on_share ? "1" : "0";
+    soundVol.value = anim.sound_volume ?? 0.35;
+    if (soundPitchJitter){
+      soundPitchJitter.value = anim.sound_pitch_jitter ?? 0;
+      if (soundPitchJitterLabel){
+        soundPitchJitterLabel.textContent = `±${Math.round(Number(soundPitchJitter.value) * 100)}%`;
+      }
+    }
+    maxCoins.value = anim.max_coins ?? 35;
+    soundVolLabel.textContent = `${Math.round(Number(soundVol.value) * 100)}%`;
+
+    applyGridColumns();
+    applyAppearance();
+
+    // Load active assets
+    await refreshAssets();
+  }
+
+  function collectSettingsFromUI(){
+    // Merge with existing settings; keep it minimal
+    const out = {
+      refresh_interval_ms: Number(refreshInterval.value || 5000),
+      request_timeout_s: Number(requestTimeout.value || 1.2),
+      theme: String(themeSelect.value || "dark"),
+      scan_default_cidr: String(scanCidr.value || "192.168.1.0/24"),
+      clean_mode: (String(cleanMode?.value) === "1"),
+      card_transparency_pct: Number(cardTransparency?.value || 8),
+      max_columns: Number(maxCols.value || 0),
+      compact_cards: (String(compactCards.value) === "1"),
+      hashrate_unit: String(hashrateUnits?.value || "GH"),
+      rejected_share_red_threshold_pct: Number(rejRedPct?.value || 1),
+      animations: {
+        enabled: String(animEnabled.value) === "1",
+        shake_on_share: String(shakeEnabled.value) === "1",
+        coin_drop: String(coinEnabled.value) === "1",
+        sound_on_share: String(soundEnabled.value) === "1",
+        sound_volume: Number(soundVol.value || 0),
+        sound_pitch_jitter: Number(soundPitchJitter?.value || 0),
+        max_coins: Number(maxCoins.value || 35),
+      },
+      thresholds: {
+        chip_temp: {
+          warn: Number(chipWarn.value || 60),
+          danger: Number(chipDanger.value || 70),
+          warn_color: String(chipWarnColor.value || "#f59e0b"),
+          danger_color: String(chipDangerColor.value || "#ef4444"),
+        },
+        vrm_temp: {
+          warn: Number(vrmWarn.value || 70),
+          danger: Number(vrmDanger.value || 85),
+          warn_color: String(vrmWarnColor.value || "#f59e0b"),
+          danger_color: String(vrmDangerColor.value || "#ef4444"),
+        },
+        offline: { grace_s: Number(offlineGrace.value || 15) },
+        hashrate: { warn_pct_of_10m: Number(hashWarnPct.value || 70) },
+      }
+    };
+    return out;
+  }
+
+  async function saveSettings(partial){
+    const payload = { settings: partial };
+    const data = await apiJson(`${apiBase}/api/dashboard/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    settings = data.settings;
+    // Keep local theme aligned
+    setTheme(localStorage.getItem("bb_theme") || settings.theme || "dark");
+    themeSelect.value = root.getAttribute("data-theme");
+    applyGridColumns();
+    applyAppearance();
+    restartPolling();
+  }
+
+  saveSettingsBtn?.addEventListener("click", async () => {
+    try{
+      await saveSettings({ animations: collectSettingsFromUI().animations });
+      alert("Saved animation settings.");
+    }catch(e){ alert("Failed to save settings: " + e.message); }
+  });
+
+  saveAllBtn?.addEventListener("click", async () => {
+    try{
+      const full = collectSettingsFromUI();
+      await saveSettings(full);
+      alert("Saved settings.");
+    }catch(e){ alert("Failed to save settings: " + e.message); }
+  });
+
+  function showTip(kind){
+    if (!tipAddrBox) return;
+    const addr = (kind === "BTC") ? TIP_BTC : TIP_DOGE;
+    const nextShown = (tipShown === kind) ? "" : kind;
+    tipShown = nextShown;
+
+    if (!tipShown){
+      tipAddrBox.style.display = "none";
+      tipAddrBox.textContent = "";
+      if (tipAddrHint) tipAddrHint.style.display = "none";
+      return;
+    }
+
+    tipAddrBox.style.display = "block";
+    tipAddrBox.textContent = `${kind}: ${addr}`;
+    if (tipAddrHint) tipAddrHint.style.display = "inline-flex";
+
+    // click the address to copy
+    tipAddrBox.onclick = async () => {
+      try{ await navigator.clipboard.writeText(addr); }catch(_){}
+      if (tipAddrHint){
+        tipAddrHint.textContent = "Copied ✓";
+        setTimeout(() => (tipAddrHint.textContent = "Click to copy"), 900);
+      }
+    };
+  }
+
+  tipBtcBtn?.addEventListener("click", () => showTip("BTC"));
+  tipDogeBtn?.addEventListener("click", () => showTip("DOGE"));
+
+  soundVol.addEventListener("input", () => {
+    soundVolLabel.textContent = `${Math.round(Number(soundVol.value) * 100)}%`;
+  });
+
+  soundPitchJitter?.addEventListener("input", () => {
+    if (soundPitchJitterLabel){
+      soundPitchJitterLabel.textContent = `±${Math.round(Number(soundPitchJitter.value) * 100)}%`;
+    }
+  });
+
+  
+  hashrateUnits?.addEventListener("change", async () => {
+    try{ await saveSettings({ hashrate_unit: String(hashrateUnits.value || "GH") }); }
+    catch(e){ alert("Failed to save: " + e.message); }
+  });
+
+  hashrateDecimals?.addEventListener("change", async () => {
+    try{ await saveSettings({ hashrate_decimals: Number(hashrateDecimals.value ?? 2) }); }
+    catch(e){ alert("Failed to save: " + e.message); }
+  });
+
+  rejRedPct?.addEventListener("change", async () => {
+    try{ await saveSettings({ rejected_share_red_threshold_pct: Number(rejRedPct.value || 1) }); }
+    catch(e){ alert("Failed to save: " + e.message); }
+  });
+
+themeSelect.addEventListener("change", async () => {
+    const t = themeSelect.value;
+    setTheme(t);
+    try{ await saveSettings({ theme: t }); }catch(_){}
+  });
+
+  cleanMode?.addEventListener("change", async () => {
+    if (!settings) return;
+    const on = (String(cleanMode.value) === "1");
+    settings.clean_mode = on;
+    applyAppearance();
+    try{ await saveSettings({ clean_mode: on }); }catch(_){}
+  });
+
+  cardTransparency?.addEventListener("input", () => {
+    if (!settings) return;
+    const v = Number(cardTransparency.value || 0);
+    settings.card_transparency_pct = v;
+    if (cardTransparencyLabel) cardTransparencyLabel.textContent = `${fmtInt(v)}%`;
+    applyAppearance();
+  });
+
+  cardTransparency?.addEventListener("change", async () => {
+    try{ await saveSettings({ card_transparency_pct: Number(cardTransparency.value || 8) }); }
+    catch(e){ alert("Failed to save: " + e.message); }
+  });
+
+  
+
+async function loadDevices(){
+    const data = await apiJson(`${apiBase}/api/dashboard/devices`);
+    devices = data.devices || [];
+    renderReorderList();
+    renderCards();
+  }
+
+  function renderCards(){
+    applyGridColumns();
+    if (!devices.length){
+      cardsEl.innerHTML = `
+        <div class="card" style="grid-column: 1 / -1;">
+          <h3 style="margin:0 0 0.35rem;">No systems yet</h3>
+          <div class="sub">Add an IP above, or run <strong>Scan LAN</strong> to discover miners.</div>
+        </div>`;
+      summaryPill.textContent = "0 systems";
+      statusSub.textContent = "–";
+      return;
+    }
+    cardsEl.innerHTML = devices.map(cardHtml).join("");
+    bindCardInteractions();
+    updateSummaryLine();
+  }
+
+  function updateSummaryLine(){
+    const online = devices.filter(d => d.online).length;
+    const total = devices.length;
+    summaryPill.textContent = `${online}/${total} online`;
+    const _t = new Date().toLocaleTimeString();
+    lastRefreshText = settings?.clean_mode
+      ? `Last refresh: ${_t}`
+      : `Last refresh: ${_t} • interval ${fmtInt(settings?.refresh_interval_ms)} ms`;
+    statusSub.textContent = lastRefreshText;
+    updateHeaderSubtitle();
+}
+
+  async function addDevice(){
+    const ip = addIp.value.trim();
+    if (!ip){ alert("Enter an IP."); return; }
+    const name = addName.value.trim() || null;
+    addBtn.disabled = true;
+    try{
+      await apiJson(`${apiBase}/api/dashboard/devices`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ ip, name }),
+      });
+      addIp.value = "";
+      addName.value = "";
+      await loadDevices();
+      await pollOnce();
+    }catch(e){
+      alert("Failed to add: " + e.message);
+    }finally{
+      addBtn.disabled = false;
+    }
+  }
+  addBtn.addEventListener("click", addDevice);
+  addIp.addEventListener("keydown", (e) => { if (e.key === "Enter") addDevice(); });
+
+  async function removeDevice(id){
+    await apiJson(`${apiBase}/api/dashboard/devices/${id}`, { method:"DELETE" });
+    // keep state map clean
+    deviceState.delete(id);
+    await loadDevices();
+  }
+
+  // Scan LAN (modal list with selectable results)
+  let scanFound = [];
+  function renderScanResults(){
+    if (!scanResults) return;
+    if (!scanFound.length){
+      scanResults.innerHTML = `<div class="hint">No results yet.</div>`;
+      scanAddBtn.disabled = true;
+      return;
+    }
+    scanResults.innerHTML = `
+      <div class="scan-list">
+        ${scanFound.map((it, idx) => {
+          const host = it.hostname || it.info?.hostname || "Unknown host";
+          const model = it.model || it.info?.deviceModel || it.info?.ASICModel || "";
+          const ip = it.ip;
+          return `
+            <div class="scan-item">
+              <div class="scan-left">
+                <input type="checkbox" class="scanCheck" data-idx="${idx}" checked />
+                <div class="scan-meta">
+                  <strong>${escapeHtml(host)} ${model ? "• " + escapeHtml(model) : ""}</strong>
+                  <span class="mono ipaddr">${escapeHtml(ip)}</span>
+                </div>
+              </div>
+              <div class="scan-actions">
+                <span class="badge">${it.info?.wifiRSSI != null ? "RSSI " + fmtInt(it.info.wifiRSSI) : "found"}</span>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+    scanAddBtn.disabled = false;
+  }
+
+  async function runScan(){
+    const cidr = (scanInputCidr.value || settings.scan_default_cidr || "192.168.1.0/24").trim();
+    if (!cidr) return;
+    scanRunBtn.disabled = true;
+    scanAddBtn.disabled = true;
+    scanStatus.textContent = "Scanning…";
+    scanResults.innerHTML = `<div class="hint">Working…</div>`;
+    try{
+      const resp = await apiJson(`${apiBase}/api/dashboard/scan`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({
+          cidr,
+          timeout_s: Number(settings.request_timeout_s || 1.2),
+          parallel: 64,
+          limit: 512
+        })
+      });
+      scanFound = resp.found || [];
+      scanStatus.textContent = `Found ${scanFound.length} system(s) in ${escapeHtml(resp.cidr)}.`;
+      renderScanResults();
+    }catch(e){
+      scanStatus.textContent = "Scan failed: " + e.message;
+      scanFound = [];
+      renderScanResults();
+    }finally{
+      scanRunBtn.disabled = false;
+    }
+  }
+
+  async function addSelectedFromScan(){
+    const checks = Array.from(document.querySelectorAll(".scanCheck"))
+      .filter(c => c.checked)
+      .map(c => Number(c.getAttribute("data-idx")));
+    const sel = checks.map(i => scanFound[i]).filter(Boolean);
+    if (!sel.length){
+      alert("Select at least one system.");
+      return;
+    }
+    scanAddBtn.disabled = true;
+    scanStatus.textContent = `Adding ${sel.length} system(s)…`;
+    let added = 0;
+    for (const it of sel){
+      try{
+        await apiJson(`${apiBase}/api/dashboard/devices`, {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ ip: it.ip, name: it.hostname || it.info?.hostname || null }),
+        });
+        added++;
+      }catch(_){}
+    }
+    scanStatus.textContent = `Added ${added}/${sel.length}.`;
+    await loadDevices();
+    await pollOnce();
+  }
+
+  function openScanModal(){
+    if (!settings?.enable_scan){
+      alert("Scan is disabled in settings.");
+      return;
+    }
+    scanInputCidr.value = settings.scan_default_cidr || "192.168.1.0/24";
+    scanStatus.textContent = "Ready.";
+    scanFound = [];
+    renderScanResults();
+    openModal(scanModal);
+  }
+
+  scanBtn.addEventListener("click", openScanModal);
+  scanRunBtn.addEventListener("click", runScan);
+  scanAddBtn.addEventListener("click", addSelectedFromScan);
+
+  refreshBtn.addEventListener("click", () => pollOnce(true));
+
+  // Reorder list (drag & drop)
+  let dragId = null;
+
+  function renderReorderList(){
+    if (!reorderList) return;
+    reorderList.innerHTML = devices.map(d => {
+      const label = d.name || d.last_info?.hostname || d.last_info?.deviceModel || d.ip;
+      return `
+        <div class="reorder-item" draggable="true" data-id="${d.id}">
+          <div class="handle">≡</div>
+          <div class="reorder-text">
+            <strong>${escapeHtml(label)}</strong>
+            <span class="mono">${escapeHtml(d.ip)}</span>
+          </div>
+          <span class="badge">${d.online ? "online" : "offline"}</span>
+        </div>
+      `;
+    }).join("");
+
+    reorderList.querySelectorAll(".reorder-item").forEach(item => {
+      item.addEventListener("dragstart", () => {
+        dragId = Number(item.getAttribute("data-id"));
+        item.style.opacity = "0.55";
+      });
+      item.addEventListener("dragend", () => {
+        dragId = null;
+        item.style.opacity = "1";
+      });
+      item.addEventListener("dragover", (e) => {
+        e.preventDefault();
+      });
+      item.addEventListener("drop", (e) => {
+        e.preventDefault();
+        const overId = Number(item.getAttribute("data-id"));
+        if (!dragId || dragId === overId) return;
+        const from = devices.findIndex(d => d.id === dragId);
+        const to = devices.findIndex(d => d.id === overId);
+        if (from < 0 || to < 0) return;
+        const moved = devices.splice(from, 1)[0];
+        devices.splice(to, 0, moved);
+        renderReorderList();
+        renderCards();
+      });
+    });
+  }
+
+  saveOrderBtn?.addEventListener("click", async () => {
+    try{
+      await apiJson(`${apiBase}/api/dashboard/devices/reorder`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ device_ids: devices.map(d => d.id) }),
+      });
+      alert("Order saved.");
+    }catch(e){
+      alert("Failed to save order: " + e.message);
+    }
+  });
+
+  // Assets
+  async function refreshAssets(){
+    await Promise.all([refreshBackgrounds(), refreshSounds()]);
+  }
+
+  async function refreshBackgrounds(){
+    if (!bgList) return;
+    const data = await apiJson(`${apiBase}/api/dashboard/assets?kind=background`);
+    const assets = data.assets || [];
+    const active = data.active_id;
+    renderAssetList(bgList, assets, active, "background");
+    // Apply active background (if any)
+    if (active){
+      applyBackgroundAsset(active, assets);
+    }else{
+      bgImageLayer.style.backgroundImage = "";
+      bgVideoLayer.style.display = "none";
+      bgVideoLayer.removeAttribute("src");
+    }
+  }
+
+  async function refreshSounds(){
+    if (!sndList) return;
+    const data = await apiJson(`${apiBase}/api/dashboard/assets?kind=sound`);
+    const assets = data.assets || [];
+    const active = data.active_id;
+    renderAssetList(sndList, assets, active, "sound");
+    activeSoundUrl = active ? `${apiBase}/api/dashboard/assets/${active}/file` : null;
+    if (activeSoundUrl){
+      activeSoundEl = new Audio(activeSoundUrl);
+      activeSoundEl.volume = Number(settings?.animations?.sound_volume ?? 0.35);
+    }else{
+      activeSoundEl = null;
+    }
+  }
+
+  function renderAssetList(container, assets, activeId, kind){
+    const isBg = (kind === "background");
+    container.innerHTML = assets.map(a => {
+      const url = `${apiBase}/api/dashboard/assets/${a.id}/file`;
+      const active = (a.id === activeId);
+      const mime = a.mime || "";
+      const isVid = isBg && mime.startsWith("video/");
+      const thumb = isBg
+        ? (isVid
+            ? `<video src="${url}" muted playsinline></video>`
+            : `<img src="${url}" alt="background"/>`)
+        : `<div class="mono" style="font-size:1.4rem; color:var(--muted);">♪</div>`;
+
+      const title = a.orig_name || a.filename || `asset ${a.id}`;
+      return `
+        <div class="asset">
+          <div class="thumb">${thumb}</div>
+          <div class="meta">
+            <div><strong>${escapeHtml(title)}</strong></div>
+            <div class="mono">${escapeHtml(mime || "")}</div>
+            <div>${a.size_bytes ? Math.round(a.size_bytes/1024) + " KB" : ""} ${active ? "• " : ""}${active ? "<span class='badge active'>active</span>" : ""}</div>
+          </div>
+          <div class="actions">
+            <button class="btn secondary" data-act="activate" data-kind="${kind}" data-id="${a.id}">Set active</button>
+            ${kind === "sound" ? `<button class="btn secondary" data-act="test" data-kind="sound" data-id="${a.id}">Test</button>` : ``}
+            <button class="btn danger" data-act="delete" data-kind="${kind}" data-id="${a.id}">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    container.querySelectorAll("[data-act='activate']").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.getAttribute("data-id"));
+        const k = btn.getAttribute("data-kind");
+        await apiJson(`${apiBase}/api/dashboard/assets/${id}/activate?kind=${encodeURIComponent(k)}`, { method:"POST" });
+        await refreshAssets();
+        // Keep settings copy up to date
+        const s = await apiJson(`${apiBase}/api/dashboard/settings`);
+        settings = s.settings;
+      });
+    });
+
+    container.querySelectorAll("[data-act='delete']").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.getAttribute("data-id"));
+        const k = btn.getAttribute("data-kind");
+        if (!confirm("Delete this asset?")) return;
+        await apiJson(`${apiBase}/api/dashboard/assets/${id}?kind=${encodeURIComponent(k)}`, { method:"DELETE" });
+        await refreshAssets();
+      });
+    });
+
+    container.querySelectorAll("[data-act='test']").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = Number(btn.getAttribute("data-id"));
+        const url = `${apiBase}/api/dashboard/assets/${id}/file`;
+        const a = new Audio(url);
+        a.volume = Number(settings?.animations?.sound_volume ?? 0.35);
+        // make playbackRate actually change pitch (some browsers preserve pitch by default)
+        try{ a.preservesPitch = false; }catch(_){}
+        try{ a.mozPreservesPitch = false; }catch(_){}
+        try{ a.webkitPreservesPitch = false; }catch(_){}
+        const jit = Number(settings?.animations?.sound_pitch_jitter ?? 0);
+        if (isFinite(jit) && jit > 0){
+          a.playbackRate = 1 + ((Math.random() * 2) - 1) * Math.min(0.5, jit);
+        }
+        a.play().catch(()=>{});});
+    });
+  }
+
+  function applyBackgroundAsset(activeId, assets){
+    const a = assets.find(x => x.id === activeId);
+    if (!a) return;
+    const url = `${apiBase}/api/dashboard/assets/${activeId}/file`;
+    const mime = a.mime || "";
+    if (mime.startsWith("video/")){
+      bgVideoLayer.style.display = "block";
+      bgVideoLayer.src = url;
+      bgVideoLayer.play().catch(()=>{});
+      bgImageLayer.style.backgroundImage = "";
+    }else{
+      bgVideoLayer.style.display = "none";
+      bgVideoLayer.removeAttribute("src");
+      bgImageLayer.style.backgroundImage = `url('${url}')`;
+    }
+  }
+
+  async function uploadAsset(kind, file){
+    const fd = new FormData();
+    fd.append("file", file);
+    await apiJson(`${apiBase}/api/dashboard/assets/upload?kind=${encodeURIComponent(kind)}`, {
+      method:"POST",
+      body: fd
+    });
+    await refreshAssets();
+  }
+
+  bgUpload?.addEventListener("change", async () => {
+    const f = bgUpload.files && bgUpload.files[0];
+    if (!f) return;
+    try{
+      await uploadAsset("background", f);
+      bgUpload.value = "";
+    }catch(e){ alert("Upload failed: " + e.message); }
+  });
+
+  sndUpload?.addEventListener("change", async () => {
+    const f = sndUpload.files && sndUpload.files[0];
+    if (!f) return;
+    try{
+      await uploadAsset("sound", f);
+      sndUpload.value = "";
+    }catch(e){ alert("Upload failed: " + e.message); }
+  });
+
+  refreshBgBtn?.addEventListener("click", refreshBackgrounds);
+  refreshSndBtn?.addEventListener("click", refreshSounds);
+
+  // Polling
+  async function pollOnce(manual=false){
+    if (!settings) return;
+    if (pollInFlight) return;
+    pollInFlight = true;
+    const timeout = Number(settings.request_timeout_s ?? 1.2);
+    try{
+      const data = await apiJson(`${apiBase}/api/dashboard/status?timeout_s=${encodeURIComponent(timeout)}`);
+      const byId = new Map((data.devices || []).map(x => [x.id, x]));
+      const holdS = Number(getThresholds().offlineGrace ?? 15);
+
+      devices = devices.map(d => {
+        const upd = byId.get(d.id);
+        if (!upd) return d;
+
+        const prevInfo = d.info || deviceState.get(d.id)?.lastInfo || null;
+
+        // If a poll fails, keep showing the last known info briefly so cards don't "flash blank".
+        let nextInfo = upd.info;
+        if (!upd.online && (nextInfo == null)){
+          const lastSeenIso = d.last_seen || d.lastSeen || null;
+          const lastSeenMs = lastSeenIso ? Date.parse(lastSeenIso) : NaN;
+          const withinHold = isFinite(lastSeenMs) && ((Date.now() - lastSeenMs) / 1000) <= holdS;
+          if (withinHold && prevInfo) nextInfo = prevInfo;
+        }
+
+        return {
+          ...d,
+          online: upd.online,
+          info: nextInfo,
+          error: upd.error,
+          last_poll: upd.last_poll,
+          last_seen: upd.online ? upd.last_poll : d.last_seen,
+          latest_benchmark: upd.latest_benchmark || d.latest_benchmark
+        };
+      });
+
+      // Animations based on sharesAccepted increase (use lastInfo if we're in hold mode)
+      for (const d of devices){
+        const info = d.info || null;
+        const shares = info ? Number(info.sharesAccepted) : NaN;
+        const prev = deviceState.get(d.id) || {};
+        const prevShares = Number(prev.lastSharesAccepted);
+        if (isFinite(shares) && isFinite(prevShares) && shares > prevShares){
+          triggerShareAnimation(d.id, shares - prevShares);
+        }
+        deviceState.set(d.id, {
+          ...prev,
+          lastSharesAccepted: isFinite(shares) ? shares : prevShares,
+          lastSeenMs: d.last_seen ? Date.parse(d.last_seen) : prev.lastSeenMs,
+          lastInfo: info || prev.lastInfo
+        });
+      }
+
+      renderCards();
+      renderReorderList();
+
+      if (manual) {
+        const _t2 = new Date().toLocaleTimeString();
+        statusSub.textContent = settings?.clean_mode
+          ? `Refreshed ${_t2}`
+          : `Refreshed ${_t2} • interval ${fmtInt(settings.refresh_interval_ms)} ms`;
+      }
+    }catch(e){
+      statusSub.textContent = `Refresh failed: ${e.message}`;
+    }finally{
+      pollInFlight = false;
+    }
+  }
+
+  function restartPolling(){
+    if (pollTimer) clearInterval(pollTimer);
+    const interval = Math.max(500, Number(settings?.refresh_interval_ms ?? 5000));
+    pollTimer = setInterval(pollOnce, interval);
+    applyGridColumns();
+  }
+
+  function triggerShareAnimation(deviceId, delta){
+    const anim = settings?.animations || {};
+    if (!anim.enabled) return;
+
+    const card = document.querySelector(`.miner-card[data-id="${deviceId}"]`);
+    if (card && anim.shake_on_share){
+      card.classList.remove("shake");
+      // force reflow
+      void card.offsetWidth;
+      card.classList.add("shake");
+      setTimeout(() => card.classList.remove("shake"), 400);
+    }
+
+    if (anim.coin_drop){
+      const coinsToDrop = Math.min(Math.max(1, delta || 1), 3);
+      for (let i=0;i<coinsToDrop;i++){
+        if (coinCount >= Number(anim.max_coins ?? 35)) break;
+        dropCoinFromCard(card);
+      }
+    }
+
+    if (anim.sound_on_share && activeSoundEl){
+      try{
+        activeSoundEl.volume = Number(anim.sound_volume ?? 0.35);
+        // clone for overlapping plays
+        const a = activeSoundEl.cloneNode();
+        a.volume = activeSoundEl.volume;
+        // make playbackRate actually change pitch (some browsers preserve pitch by default)
+        try{ a.preservesPitch = false; }catch(_){}
+        try{ a.mozPreservesPitch = false; }catch(_){}
+        try{ a.webkitPreservesPitch = false; }catch(_){}
+        const jit = Number(settings?.animations?.sound_pitch_jitter ?? 0);
+        if (isFinite(jit) && jit > 0){
+          a.playbackRate = 1 + ((Math.random() * 2) - 1) * Math.min(0.5, jit);
+        }
+        a.play().catch(()=>{});
+      }catch(_){ }
+    }
+  }
+
+  function dropCoinFromCard(card){
+    coinCount++;
+    const c = document.createElement("div");
+    c.className = "coin";
+    const rect = card ? card.getBoundingClientRect() : { left: window.innerWidth/2, top: 120, width: 0, height: 0 };
+    const x = rect.left + Math.min(rect.width - 24, Math.max(24, rect.width * (0.55 + (Math.random()-0.5)*0.5)));
+    const y = rect.top + Math.min(rect.height - 24, Math.max(24, rect.height * 0.55));
+    c.style.setProperty("--x", `${x}px`);
+    c.style.setProperty("--y", `${y}px`);
+    const t = 1500 + Math.random() * 900;
+    c.style.setProperty("--t", `${Math.round(t)}ms`);
+    document.body.appendChild(c);
+    // cleanup
+    setTimeout(() => {
+      c.remove();
+      coinCount = Math.max(0, coinCount - 1);
+    }, t + 250);
+  }
+
+  // Init
+  loadTheme();
+
+  (async () => {
+    try{
+      await loadSettings();
+      await loadDevices();
+      await pollOnce();
+      restartPolling();
+    }catch(e){
+      summaryPill.textContent = "Dashboard error";
+      statusSub.textContent = e.message;
+      console.error(e);
+    }
+  })();
+
+})();
+</script>
+</body>
+</html>
