@@ -25,6 +25,7 @@ from benchmark_engine import (
     GridBenchmarkRunner,
 )
 import db
+import dashboard_api
 
 
 app = FastAPI(title="Bitaxe / NerdQaxe Benchmark Web")
@@ -38,6 +39,7 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.include_router(dashboard_api.router)
 
 # in-memory runners for active jobs
 runners: Dict[str, BenchmarkRunner] = {}
