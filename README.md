@@ -1,6 +1,6 @@
 # Bitaxe Hashrate Benchmark - Web GUI
 
-Based on mrv777's Python-based benchmarking tool, this is a dockerized web gui for running tests and reviewing results. I used ChatGPT for lots of this but have also worked on double-checking and tweaking things, so please let me know if there are any issues. Use at your own discretion.
+This is a dockerized web gui for running tests and reviewing results. I did use ChatGPT for assistance on this but have also worked on double-checking and tweaking things, so please let me know if there are any issues. Use at your own discretion.
 
 ---
 
@@ -9,7 +9,7 @@ Based on mrv777's Python-based benchmarking tool, this is a dockerized web gui f
 
 ## Overview
 
-This project is a web-based benchmarking harness for Bitaxe / NerdQaxe-class devices.
+Based on mrv777's Python-based benchmarking tool, this project is a web-based benchmarking harness for Bitaxe / NerdQaxe-class devices.
 It discovers your device when given an IP address, applies a (hopefully) safe but configurable tuning profile, then walks through voltage/frequency steps while collecting detailed telemetry and generating results you can compare, export, and re-run later.
 
 ---
