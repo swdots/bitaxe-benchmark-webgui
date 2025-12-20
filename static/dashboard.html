@@ -22,6 +22,8 @@
       --offline:#64748b;
       --coin:#fbbf24;
       --coin2:#fde68a;
+      --ice:#38bdf8;
+      --ice2:#bae6fd;
     }
     [data-theme="light"]{
       --bg:#f9fafb;
@@ -40,6 +42,8 @@
       --offline:#94a3b8;
       --coin:#d97706;
       --coin2:#f59e0b;
+      --ice:#0284c7;
+      --ice2:#7dd3fc;
     }
     *{ box-sizing:border-box; }
     body{
@@ -404,6 +408,20 @@
     }
     .tag strong{ color:var(--fg); font-weight:700; font-size:0.74rem; }
 
+    .tag strong.best-diff.gold{
+      color: var(--coin);
+      text-shadow: 0 1px 0 rgba(0,0,0,0.35);
+    }
+    .block-star{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      margin-right:0.35rem;
+      color: var(--coin);
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45));
+      transform: translateY(-0.5px);
+    }
+
     .menuBtn{
       position:absolute;
       top:0.55rem;
@@ -738,7 +756,15 @@
       color: rgba(2,6,23,0.55);
       text-shadow: 0 1px 0 rgba(255,255,255,0.22);
     }
-    @keyframes coinDrop {
+    
+    .coin.coin-ice{
+      background: radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--ice2) 60%, white), var(--ice));
+    }
+    .coin.coin-ice::after{
+      color: rgba(2,6,23,0.55);
+      text-shadow: 0 1px 0 rgba(255,255,255,0.25);
+    }
+@keyframes coinDrop {
       0% { opacity:0; transform: translate(-50%,-50%) scale(0.55); }
       10%{ opacity:1; transform: translate(-50%,-70%) scale(1.0); }
       85%{ opacity:1; transform: translate(-50%, calc(100vh - 44px)) rotate(240deg) scale(0.95); }
@@ -1105,6 +1131,32 @@
 
       <div class="row">
         <div>
+          <label>Highlight block finders</label>
+          <select id="blockHighlightEnabled">
+            <option value="1">On</option>
+            <option value="0">Off</option>
+          </select>
+          <div class="hint">If a system has found ≥1 block, show a gold star and make its Best difficulty gold.</div>
+        </div>
+        <div>
+          <label>New best difficulty coin</label>
+          <select id="newBestCoinEnabled">
+            <option value="1">On</option>
+            <option value="0">Off</option>
+          </select>
+          <div class="hint">When an accepted share also sets a new best difficulty, drop an icy-blue coin.</div>
+        </div>
+        <div>
+          <label>New best basis</label>
+          <select id="newBestBasis">
+            <option value="overall">Best overall difficulty</option>
+            <option value="session">Best session difficulty</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
           <label for="shakeIntensity">Shake intensity (px)</label>
           <input id="shakeIntensity" type="range" min="0" max="10" step="0.5" />
           <div class="hint" id="shakeIntensityLabel">–</div>
@@ -1321,7 +1373,9 @@ const $ = (id) => document.getElementById(id);
 
   const coinPhysics = $("coinPhysics");
   const coinPop = $("coinPop");
-  const coinPopLabel = $("coinPopLabel");
+  const blockHighlightEnabled = $("blockHighlightEnabled");
+  const newBestCoinEnabled = $("newBestCoinEnabled");
+  const newBestBasis = $("newBestBasis");
 
 
   const saveSettingsBtn = $("saveSettingsBtn");
@@ -1632,6 +1686,12 @@ function maybeColorTempSpan(val, warn, danger, warnColor, dangerColor){
 const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) : null;
     const errPct = info ? (info.errorPercentage ?? info.error_percentage ?? null) : null;
 
+    const foundBlocks = info ? (info.foundBlocks ?? info.blockFound ?? info.block_found ?? info.blocksFound ?? null) : null;
+    const hasFoundBlock = (foundBlocks != null && isFinite(Number(foundBlocks)) && Number(foundBlocks) > 0);
+    const highlightBlocks = (settings?.highlight_block_finders !== false);
+    const starHtml = (highlightBlocks && hasFoundBlock) ? `<span class="block-star" title="Block found">★</span>` : ``;
+
+
     const dot = dotClassFor(info, online, dev.last_seen || dev.lastSeen);
 
     const compact = !!settings?.compact_cards;
@@ -1683,7 +1743,8 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
       return (s != null && s >= showAfter) ? `Updated ${fmtAgo(lastPoll)}` : "";
     })();
 
-    const bestDiffText = bestDiff != null ? `<span class="tag"><span class="k">Best</span> <strong>${fmtSI(bestDiff)}</strong></span>` : "";
+    const bestDiffStrongClass = (highlightBlocks && hasFoundBlock) ? "best-diff gold" : "best-diff";
+    const bestDiffText = bestDiff != null ? `<span class="tag"><span class="k">Best</span> <strong class="${bestDiffStrongClass}">${fmtSI(bestDiff)}</strong></span>` : "";
     const errText = (errPct != null && isFinite(Number(errPct))) ? `<span class="tag"><span class="k">Err</span> <strong>${fmtNum(errPct,1)}%</strong></span>` : "";
 
     const sharesText = shares != null ? `<span class="tag"><span class="k">Shares</span> <strong>${fmtInt(shares)}${(sharesRej != null && Number(sharesRej) > 0) ? `<span class="${rejIsBad ? "rej" : "rej-muted"}">(${fmtInt(sharesRej)})</span>` : ``}</strong></span>` : "";
@@ -1700,7 +1761,7 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
 
         
         <div class="miner-top">
-          <h3 class="name top-name">${escapeHtml(name)}</h3>
+          <h3 class="name top-name">${starHtml}${escapeHtml(name)}</h3>
 
           <div class="statuswrap">
             <span class="pill ${isTesting ? "testing" : ""}">${isTesting ? "Testing" : (online ? "Online" : "Offline")}</span>
@@ -1988,6 +2049,16 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
     if (updatedLabelDelay) updatedLabelDelay.value = t.updatedLabelDelay;
 
     const anim = settings.animations || {};
+    // Visual niceties (defaults)
+    if (settings.highlight_block_finders == null) settings.highlight_block_finders = true;
+    if (!settings.new_best_share_coloring) settings.new_best_share_coloring = { enabled: true, mode: "overall" };
+    if (settings.new_best_share_coloring.enabled == null) settings.new_best_share_coloring.enabled = true;
+    if (!settings.new_best_share_coloring.mode) settings.new_best_share_coloring.mode = "overall";
+
+    if (blockHighlightEnabled) blockHighlightEnabled.value = settings.highlight_block_finders ? "1" : "0";
+    if (newBestCoinEnabled) newBestCoinEnabled.value = settings.new_best_share_coloring.enabled ? "1" : "0";
+    if (newBestBasis) newBestBasis.value = String(settings.new_best_share_coloring.mode || "overall");
+
     animEnabled.value = anim.enabled ? "1" : "0";
     shakeEnabled.value = anim.shake_on_share ? "1" : "0";
     if (shakeIntensity){
@@ -2060,6 +2131,11 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
         sound_pitch_jitter: Number(soundPitchJitter?.value || 0),
         max_coins: Number(maxCoins.value || 35),
       },
+      highlight_block_finders: (String(blockHighlightEnabled?.value || ((settings?.highlight_block_finders === false) ? "0" : "1")) === "1"),
+      new_best_share_coloring: {
+        enabled: (String(newBestCoinEnabled?.value || ((settings?.new_best_share_coloring?.enabled === false) ? "0" : "1")) === "1"),
+        mode: String(newBestBasis?.value || settings?.new_best_share_coloring?.mode || "overall"),
+      },
       thresholds: {
         chip_temp: {
           warn: Number(chipWarn.value || 60),
@@ -2101,7 +2177,8 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
 
   saveSettingsBtn?.addEventListener("click", async () => {
     try{
-      await saveSettings({ animations: collectSettingsFromUI().animations });
+      const cfg = collectSettingsFromUI();
+      await saveSettings({ animations: cfg.animations, highlight_block_finders: cfg.highlight_block_finders, new_best_share_coloring: cfg.new_best_share_coloring });
       alert("Saved animation settings.");
     }catch(e){ alert("Failed to save settings: " + e.message); }
   });
@@ -2878,6 +2955,10 @@ async function loadDevices(){
       const byId = new Map((data.devices || []).map(x => [x.id, x]));
       const holdS = Number(getThresholds().offlineGrace ?? 15);
       const animQueue = [];
+      const nbCfg = settings?.new_best_share_coloring || {};
+      const nbEnabled = (nbCfg.enabled !== false);
+      const nbMode = String(nbCfg.mode || "overall");
+
 
       devices = devices.map(d => {
         const upd = byId.get(d.id);
@@ -2915,8 +2996,18 @@ async function loadDevices(){
         const prevAcc = Number(prev.lastSharesAccepted);
         const prevRej = Number(prev.lastSharesRejected);
 
+        const currBest = Number(info?.bestDiff ?? info?.best_diff ?? info?.totalBestDiff);
+        const currSessBest = Number(info?.bestSessionDiff ?? info?.best_session_diff ?? info?.sessionBestDiff ?? info?.bestSession ?? null);
+        const prevBest = Number(prev.lastBestDiff);
+        const prevSessBest = Number(prev.lastBestSessionDiff);
+
+        const overallImproved = (isFinite(currBest) && isFinite(prevBest) && currBest > prevBest);
+        const sessionImproved = (isFinite(currSessBest) && isFinite(prevSessBest) && currSessBest > prevSessBest);
+        const improved = (nbMode === "session") ? sessionImproved : overallImproved;
+
         if (isFinite(acc) && isFinite(prevAcc) && acc > prevAcc){
-          animQueue.push({ id: d.id, delta: (acc - prevAcc), kind: "accepted" });
+          const kind = (nbEnabled && improved) ? "newbest" : "accepted";
+          animQueue.push({ id: d.id, delta: (acc - prevAcc), kind });
         }
         if (isFinite(rej) && isFinite(prevRej) && rej > prevRej){
           animQueue.push({ id: d.id, delta: (rej - prevRej), kind: "rejected" });
@@ -2926,6 +3017,8 @@ async function loadDevices(){
           ...prev,
           lastSharesAccepted: isFinite(acc) ? acc : prevAcc,
           lastSharesRejected: isFinite(rej) ? rej : prevRej,
+          lastBestDiff: isFinite(currBest) ? currBest : prevBest,
+          lastBestSessionDiff: isFinite(currSessBest) ? currSessBest : prevSessBest,
           lastSeenMs: d.last_seen ? Date.parse(d.last_seen) : prev.lastSeenMs,
           lastInfo: info || prev.lastInfo
         });
@@ -3343,7 +3436,7 @@ function updateCoinPhysicsConfig(){
   function dropCoinFromCardCss(card, kind="accepted"){
     coinCount++;
     const c = document.createElement("div");
-    c.className = (kind === "rejected") ? "coin coin-red" : "coin";
+    c.className = (() => { let cls = "coin"; if (kind === "rejected") cls += " coin-red"; else if (kind === "newbest") cls += " coin-ice"; return cls; })();
     const rect = card ? card.getBoundingClientRect() : { left: window.innerWidth/2, top: 120, width: 0, height: 0 };
     const x = rect.left + Math.min(rect.width - 24, Math.max(24, rect.width * (0.55 + (Math.random()-0.5)*0.5)));
     const y = rect.top + Math.min(rect.height - 24, Math.max(24, rect.height * 0.55));
@@ -3366,7 +3459,7 @@ function updateCoinPhysicsConfig(){
 
     coinCount++;
     const el = document.createElement("div");
-    el.className = (kind === "rejected") ? "coin coin-phys coin-red" : "coin coin-phys";
+    el.className = (() => { let cls = "coin coin-phys"; if (kind === "rejected") cls += " coin-red"; else if (kind === "newbest") cls += " coin-ice"; return cls; })();
     el.style.opacity = "1";
     document.body.appendChild(el);
 
