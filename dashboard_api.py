@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
+import time
 import os
 import json
 import ipaddress
@@ -29,6 +30,7 @@ SND_DIR = os.path.join(ASSET_ROOT, "sounds")
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "refresh_interval_ms": 5000,
     "request_timeout_s": 1.2,
+    "block_odds_timescale": "day",  # hour|day|month|year
     "theme": "dark",  # "dark" or "light" (front-end also keeps bb_theme localStorage)
     "clean_mode": False,
     "card_transparency_pct": 8,
@@ -291,6 +293,96 @@ def api_update_settings(payload: SettingsUpdate):
     merged = _deep_merge(current, payload.settings or {})
     _save_settings(merged)
     return {"status": "ok", "settings": merged}
+
+
+# ---- Network difficulty helper (for block-odds UI) ----
+_DIFFICULTY_CACHE: Dict[str, Any] = {"difficulty": None, "source": None, "as_of": None, "fetched_at": 0.0}
+
+def _fetch_difficulty_from_mempool(api_base: str = "https://mempool.space", timeout_s: float = 2.5) -> float:
+    """
+    Uses a public mempool/esplora-compatible REST API:
+      - GET /api/blocks/tip/hash -> tip block hash
+      - GET /api/block/:hash -> JSON includes "difficulty"
+    """
+    tip_hash = requests.get(f"{api_base}/api/blocks/tip/hash", timeout=timeout_s).text.strip()
+    if not tip_hash:
+        raise RuntimeError("Empty tip hash")
+    blk = requests.get(f"{api_base}/api/block/{tip_hash}", timeout=timeout_s).json()
+    diff = blk.get("difficulty")
+    if diff is None:
+        raise RuntimeError("No difficulty in block payload")
+    return float(diff)
+
+def _get_network_difficulty() -> Dict[str, Any]:
+    # 1) Prefer device-provided value (Bitaxe Gamma exposes 'networkDifficulty')
+    best_diff: Optional[float] = None
+    best_as_of: Optional[str] = None
+    try:
+        rows = db.get_devices()
+    except Exception:
+        rows = []
+    for d in rows:
+        info_json = d.get("last_info_json")
+        if not info_json:
+            continue
+        try:
+            info = json.loads(info_json)
+        except Exception:
+            continue
+        diff = info.get("networkDifficulty") or info.get("difficulty")
+        try:
+            diff_f = float(diff)
+        except Exception:
+            continue
+        if not (diff_f > 0):
+            continue
+        as_of = d.get("last_poll") or d.get("last_seen") or None
+        # keep the newest timestamp we can parse
+        if best_as_of is None:
+            best_diff, best_as_of = diff_f, as_of
+            continue
+        try:
+            cur_ts = datetime.fromisoformat(str(as_of).replace("Z", "+00:00")).timestamp() if as_of else 0.0
+        except Exception:
+            cur_ts = 0.0
+        try:
+            best_ts = datetime.fromisoformat(str(best_as_of).replace("Z", "+00:00")).timestamp() if best_as_of else 0.0
+        except Exception:
+            best_ts = 0.0
+        if cur_ts >= best_ts:
+            best_diff, best_as_of = diff_f, as_of
+
+    if best_diff is not None:
+        return {"difficulty": best_diff, "source": "device", "as_of": best_as_of}
+
+    # 2) Cache (avoid hammering public APIs)
+    now = time.time()
+    if _DIFFICULTY_CACHE.get("difficulty") is not None and (now - float(_DIFFICULTY_CACHE.get("fetched_at") or 0)) < 43200:
+        return {
+            "difficulty": _DIFFICULTY_CACHE["difficulty"],
+            "source": _DIFFICULTY_CACHE.get("source") or "cache",
+            "as_of": _DIFFICULTY_CACHE.get("as_of"),
+            "cached": True,
+        }
+
+    # 3) Public fallback
+    diff = _fetch_difficulty_from_mempool("https://mempool.space")
+    payload = {"difficulty": diff, "source": "mempool.space", "as_of": _utcnow_iso()}
+    _DIFFICULTY_CACHE.update({**payload, "fetched_at": now})
+    return payload
+
+
+@router.get("/network/difficulty")
+def api_get_network_difficulty():
+    """
+    Returns current Bitcoin network difficulty.
+    Prefers miners that expose it; otherwise falls back to a public mempool/esplora endpoint.
+    """
+    try:
+        return _get_network_difficulty()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch difficulty: {e}")
+
 
 
 @router.get("/devices")
