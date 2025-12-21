@@ -1,6 +1,6 @@
 # Bitaxe Hashrate Benchmark - Web GUI
 
-This is a dockerized web gui for running tests and reviewing results. I did use ChatGPT for assistance on this but have also worked on double-checking and tweaking things, so please let me know if there are any issues. Use at your own discretion.
+This is a dockerized web gui for running tests and reviewing results. The dashboard page allows users to scan the network for, add, and monitor mining systems with a cusomizable dashboard page. I did use ChatGPT for assistance on this but have also worked on double-checking and tweaking things, so please let me know if there are any issues. Use at your own discretion.
 
 ---
 
