@@ -1590,7 +1590,8 @@ const $ = (id) => document.getElementById(id);
     }
     // temps
     const chip = Number(info?.temp);
-    const vrm = Number(info?.vrTemp);
+    const out = Number(info?.outTemp);
+    const vrm = isFinite(out) ? out : Number(info?.vrTemp);
     let worst = 0; // 0 ok, 1 warn, 2 danger
     if (isFinite(chip)){
       if (chip >= th.chipDanger) worst = Math.max(worst, 2);
@@ -1669,7 +1670,9 @@ function maybeColorTempSpan(val, warn, danger, warnColor, dangerColor){
 
     const hr = info ? Number(info.hashRate) : NaN;
     const chip = info ? Number(info.temp) : NaN;
-    const vrm = info ? Number(info.vrTemp) : NaN;
+    const out = info ? Number(info.outTemp) : NaN;
+    const vrm = isFinite(out) ? out : (info ? Number(info.vrTemp) : NaN);
+    const temp2Label = isFinite(out) ? "Out" : "VRM";
     const fan = info ? Number(info.fanspeed ?? info.fanSpeed ?? info.fan_speed ?? info.fan_rpm ?? info.fanRPM ?? info.fanrpm) : NaN;
     const pwr = info ? Number(info.power) : NaN;
     const eff = info ? efficiencyJTH(info) : null;
@@ -1940,7 +1943,14 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
     const therm = info ? `
       <div class="kvgrid">
         ${kvRow("Chip temp", `<strong>${fmtNum(info.temp,1)} °C</strong>`)}
-        ${kvRow("VRM temp", `<strong>${fmtNum(info.vrTemp,1)} °C</strong>`)}
+        ${(() => {
+          const hasOut = (info?.outTemp != null && isFinite(Number(info.outTemp)));
+          const hasVrm = (info?.vrTemp != null && isFinite(Number(info.vrTemp)));
+          const outRow = hasOut ? kvRow("Output temp", `<strong>${fmtNum(info.outTemp,1)} °C</strong>`) : "";
+          const vrmRow = hasVrm ? kvRow("VRM temp", `<strong>${fmtNum(info.vrTemp,1)} °C</strong>`) : "";
+          if (hasOut && hasVrm && Math.abs(Number(info.outTemp) - Number(info.vrTemp)) > 0.1) return outRow + vrmRow;
+          return hasOut ? outRow : vrmRow;
+        })()}
         ${kvRow("PID target", `${fmtNum(info.pidTargetTemp,1)} °C`)}
         ${kvRow("Fan speed", `${fmtInt(info.fanspeed)} %`)}
         ${kvRow("Fan RPM", `${fmtInt(info.fanrpm)}`)}
