@@ -839,7 +839,7 @@
           </div>
           <div class="shrink" style="min-width:200px;">
             <label for="addName">Name (optional)</label>
-            <input id="addName" type="text" placeholder="mithril" />
+            <input id="addName" type="text" placeholder="hostname" />
           </div>
           <div class="shrink" style="min-width:130px;">
             <label>&nbsp;</label>
@@ -2755,7 +2755,19 @@ async function loadDevices(){
     }finally{
       addBtn.disabled = false;
     }
-  }addIp.addEventListener("keydown", (e) => { if (e.key === "Enter") addDevice(); });
+  }
+
+  // Add via Enter key or the Add button
+  addIp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter"){
+        e.preventDefault();
+        addDevice();
+      }
+    });
+    addBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      addDevice();
+    });
 
   async function removeDevice(id){
     await apiJson(`${apiBase}/api/dashboard/devices/${id}`, { method:"DELETE" });
