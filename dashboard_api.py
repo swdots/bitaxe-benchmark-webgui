@@ -112,6 +112,7 @@ def _ensure_tables() -> None:
     conn = db._get_conn()
     cur = conn.cursor()
 
+    # Canonical schema for new installs.
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS dashboard_devices (
@@ -131,21 +132,18 @@ def _ensure_tables() -> None:
         """
     )
 
-    # ---- schema migrations ----
-    # NOTE: SQLite has no native schema migration support; we keep this safe and
-    # additive (ALTER TABLE ADD COLUMN). This also heals older/broken installs.
-    def _cols() -> set[str]:
+    def _table_info():
         cur.execute("PRAGMA table_info(dashboard_devices);")
-        return {row[1] for row in cur.fetchall()}  # (cid, name, type, notnull, dflt_value, pk)
-
-    cols = _cols()
+        rows = cur.fetchall()
+        cols = {r[1] for r in rows}  # (cid, name, type, notnull, dflt_value, pk)
+        types = {r[1]: (r[2] or "") for r in rows}
+        return cols, types
 
     def _add_col(col_name: str, ddl: str) -> None:
-        nonlocal cols
+        cols, _types = _table_info()
         if col_name in cols:
             return
         cur.execute(ddl)
-        cols = _cols()
 
     # Protocol-aware polling.
     _add_col("poll_type", "ALTER TABLE dashboard_devices ADD COLUMN poll_type TEXT NOT NULL DEFAULT 'http';")
@@ -160,6 +158,88 @@ def _ensure_tables() -> None:
     _add_col("online", "ALTER TABLE dashboard_devices ADD COLUMN online INTEGER NOT NULL DEFAULT 0;")
     _add_col("last_error", "ALTER TABLE dashboard_devices ADD COLUMN last_error TEXT;")
     _add_col("last_info_json", "ALTER TABLE dashboard_devices ADD COLUMN last_info_json TEXT;")
+
+    # Cleanup migration for the historical missing-comma bug.
+    # Old schema could yield a column type like: "TEXT\n            last_seen TEXT".
+    cols, types = _table_info()
+    cfg_type = str(types.get("config_json") or "")
+    if cfg_type and ("\n" in cfg_type or "last_seen" in cfg_type.lower()):
+        tmp = "dashboard_devices__rebuild"
+        cur.execute(f"DROP TABLE IF EXISTS {tmp};")
+        cur.execute(
+            f"""
+            CREATE TABLE {tmp} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                ip TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                poll_type TEXT NOT NULL DEFAULT 'http',
+                config_json TEXT,
+                last_seen TEXT,
+                last_poll TEXT,
+                online INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                last_info_json TEXT
+            );
+            """
+        )
+
+        expected = [
+            "id",
+            "name",
+            "ip",
+            "created_at",
+            "sort_order",
+            "poll_type",
+            "config_json",
+            "last_seen",
+            "last_poll",
+            "online",
+            "last_error",
+            "last_info_json",
+        ]
+
+        cols, _types2 = _table_info()
+        params = []
+        select_parts = []
+        now = _utcnow_iso()
+        for c in expected:
+            if c in cols:
+                select_parts.append(c)
+            else:
+                if c == "online":
+                    select_parts.append("0")
+                elif c == "created_at":
+                    select_parts.append("?")
+                    params.append(now)
+                else:
+                    select_parts.append("NULL")
+
+        cur.execute(
+            f"INSERT INTO {tmp} ({', '.join(expected)}) "
+            f"SELECT {', '.join(select_parts)} FROM dashboard_devices;",
+            params,
+        )
+
+        cur.execute("DROP TABLE dashboard_devices;")
+        cur.execute(f"ALTER TABLE {tmp} RENAME TO dashboard_devices;")
+
+        # Keep AUTOINCREMENT sequence sane.
+        try:
+            cur.execute("SELECT COALESCE(MAX(id), 0) AS mx FROM dashboard_devices;")
+            row = cur.fetchone()
+            try:
+                mx = int(row["mx"])  # sqlite3.Row
+            except Exception:
+                mx = int(row[0]) if row else 0
+            cur.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES('dashboard_devices', ?) "
+                "ON CONFLICT(name) DO UPDATE SET seq=excluded.seq;",
+                (mx,),
+            )
+        except Exception:
+            pass
 
     # Normalize any empty values for older installs.
     cur.execute("UPDATE dashboard_devices SET poll_type='http' WHERE poll_type IS NULL OR TRIM(poll_type)='';")
