@@ -43,6 +43,8 @@ BUILTIN_KIND_DIRS = {
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "refresh_interval_ms": 5000,
     "request_timeout_s": 1.2,
+    "pause_polling_when_hidden": True,
+    "destroy_coins_when_paused": False,
     "block_odds_timescale": "day",  # hour|day|month|year
     "theme": "dark",  # "dark" or "light" (front-end also keeps bb_theme localStorage)
     "clean_mode": False,
