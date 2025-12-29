@@ -903,6 +903,27 @@
         </div>
       </div>
 
+      <div class="row">
+        <div>
+          <label for="pauseWhenHidden">Pause polling when tab is hidden</label>
+          <select id="pauseWhenHidden">
+            <option value="0">No</option>
+            <option value="1">Yes</option>
+          </select>
+          <div class="hint">Stops polling &amp; animations when the dashboard isn&#39;t visible (prevents coin buildup).</div>
+        </div>
+
+        <div>
+          <label for="destroyCoinsWhenHidden">Destroy coins while paused</label>
+          <select id="destroyCoinsWhenHidden">
+            <option value="0">No</option>
+            <option value="1">Yes</option>
+          </select>
+          <div class="hint">If “Yes”, clears all coins as soon as the tab becomes hidden. If “No”, keeps existing coins and does a proportional catch-up when you return (spawning up to 50% of the max coin cap).</div>
+        </div>
+      </div>
+
+
       <div class="divider"></div>
 
       <div class="row">
@@ -1368,6 +1389,8 @@ const $ = (id) => document.getElementById(id);
   // Settings inputs
   const refreshInterval = $("refreshInterval");
   const requestTimeout = $("requestTimeout");
+  const pauseWhenHidden = $("pauseWhenHidden");
+  const destroyCoinsWhenHidden = $("destroyCoinsWhenHidden");
   const scanCidr = $("scanCidr");
   const themeSelect = $("themeSelect");
   const cleanMode = $("cleanMode");
@@ -1466,7 +1489,99 @@ const $ = (id) => document.getElementById(id);
   let coinPruneTimer = 0;      // setTimeout handle (0 = none)
   let coinPruneRaf = 0;        // RAF handle (0 = none)
 
+  // visibility / throttling safety
+  let coinLoopsPausedByVisibility = false;
+  let pollingPausedByVisibility = false;
 
+  function isPageVisible(){
+    return document.visibilityState === "visible" && !document.hidden;
+  }
+
+  function pauseCoinLoops(){
+    if (coinLoopsPausedByVisibility) return;
+    coinLoopsPausedByVisibility = true;
+
+    // Explicitly stop physics/prune loops while hidden to save CPU.
+    if (coinRaf){
+      cancelAnimationFrame(coinRaf);
+      coinRaf = 0;
+    }
+    if (coinPruneRaf){
+      cancelAnimationFrame(coinPruneRaf);
+      coinPruneRaf = 0;
+    }
+    if (coinPruneTimer){
+      clearTimeout(coinPruneTimer);
+      coinPruneTimer = 0;
+    }
+  }
+
+  function resumeCoinLoops(){
+    if (!coinLoopsPausedByVisibility) return;
+    coinLoopsPausedByVisibility = false;
+
+    const anim = settings?.animations || {};
+    if (anim.coin_physics && coinBodies.length && isPageVisible()){
+      startCoinLoop();
+      // In case we exceeded the cap while paused.
+      pruneCoinsToMax(0);
+    }
+  }
+
+  function clearAllCoins(){
+    // Stop physics/prune loops and remove all coin DOM/bodies.
+    pauseCoinLoops();
+
+    // Remove physics bodies
+    if (coinBodies.length){
+      for (const b of coinBodies.slice()){
+        try{ b.fading = true; }catch(_){}
+        try{ removeCoinBody(b); }catch(_){}
+      }
+      coinBodies.length = 0;
+    }
+
+    // Remove any remaining DOM coins (CSS mode or already-faded physics)
+    try{
+      document.querySelectorAll(".coin").forEach(el => { try{ el.remove(); }catch(_){} });
+    }catch(_){}
+
+    coinCount = 0;
+  }
+
+  function handleVisibilityChange(){
+    const visible = isPageVisible();
+
+    if (!visible){
+      // If the browser stops painting/RAF, coins can accumulate in DOM.
+      // If configured, nuke them while hidden (memory saver).
+      if (settings?.destroy_coins_when_paused !== false){
+        clearAllCoins();
+      }else{
+        // Keep the existing coins, but stop physics/prune loops to save CPU.
+        pauseCoinLoops();
+      }
+
+      if (settings?.pause_polling_when_hidden){
+        if (pollTimer){
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        pollingPausedByVisibility = true;
+      }
+      return;
+    }
+
+    // Becoming visible again
+    resumeCoinLoops();
+
+    if (pollingPausedByVisibility){
+      pollingPausedByVisibility = false;
+      // Catch-up once: compute deltas since we paused and spawn coins proportionally (up to cap).
+      pollOnce(false, { resumeCatchup: true }).catch(()=>{});
+      restartPolling();
+    }
+  }
   function escapeHtml(str){
     if (str == null) return "";
     return String(str)
@@ -2104,6 +2219,8 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
     // Fill UI
     refreshInterval.value = settings.refresh_interval_ms ?? 5000;
     requestTimeout.value = settings.request_timeout_s ?? 1.2;
+    if (pauseWhenHidden) pauseWhenHidden.value = (settings.pause_polling_when_hidden ? "1" : "0");
+    if (destroyCoinsWhenHidden) destroyCoinsWhenHidden.value = ((settings.destroy_coins_when_paused !== false) ? "1" : "0");
     scanCidr.value = settings.scan_default_cidr ?? "192.168.1.0/24";
 
     if (braiinsUser) braiinsUser.value = settings?.braiins?.rest_username ?? "";
@@ -2192,6 +2309,8 @@ const bestDiff = info ? (info.bestDiff ?? info.best_diff ?? info.totalBestDiff) 
     const out = {
       refresh_interval_ms: Number(refreshInterval.value || 5000),
       request_timeout_s: Number(requestTimeout.value || 1.2),
+      pause_polling_when_hidden: (String(pauseWhenHidden?.value) === "1"),
+      destroy_coins_when_paused: (String(destroyCoinsWhenHidden?.value) === "1"),
       theme: String(themeSelect.value || "dark"),
       scan_default_cidr: String(scanCidr.value || "192.168.1.0/24"),
       clean_mode: (String(cleanMode?.value) === "1"),
@@ -3101,7 +3220,8 @@ async function loadDevices(){
   refreshSndBtn?.addEventListener("click", refreshSounds);
 
   // Polling
-  async function pollOnce(manual=false){
+  async function pollOnce(manual=false, opts={}){
+    const suppressAnimations = !!opts.suppressAnimations;
     if (!settings) return;
     if (pollInFlight) return;
     pollInFlight = true;
@@ -3184,9 +3304,14 @@ async function loadDevices(){
 
       renderCards();
       renderReorderList();
-
-      for (const a of animQueue){
-        triggerShareAnimation(a.id, a.delta, a.kind);
+      if (!suppressAnimations){
+        if (opts && opts.resumeCatchup){
+          playResumeCatchupAnimations(animQueue);
+        }else{
+          for (const a of animQueue){
+            triggerShareAnimation(a.id, a.delta, a.kind);
+          }
+        }
       }
 
       if (manual) {
@@ -3203,15 +3328,191 @@ async function loadDevices(){
   }
 
   function restartPolling(){
-    if (pollTimer) clearInterval(pollTimer);
+    if (pollTimer){
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+
+    // If configured, don't poll while hidden (we'll resume via visibilitychange)
+    if (settings?.pause_polling_when_hidden && !isPageVisible()){
+      pollingPausedByVisibility = true;
+      return;
+    }
+
     const interval = Math.max(500, Number(settings?.refresh_interval_ms ?? 5000));
-    pollTimer = setInterval(pollOnce, interval);
+    pollTimer = setInterval(() => { pollOnce(); }, interval);
     applyGridColumns();
   }
 
-  function triggerShareAnimation(deviceId, delta, kind="accepted"){
+  function allocateCoinsProportional(animQueue, available){
+    // Returns [{id, kind, coins}] distributing 'available' coins proportional to delta weights.
+    const items = (animQueue || [])
+      .map(a => ({ id: a.id, kind: a.kind || "accepted", w: Math.max(0, Number(a.delta || 0)) }))
+      .filter(a => a.id && a.w > 0);
+
+    if (!items.length || available <= 0) return [];
+
+    const totalW = items.reduce((s, a) => s + a.w, 0);
+    if (!(totalW > 0)) return [];
+
+    // Base allocation (floor) + remainder distribution.
+    const raw = items.map(a => {
+      const exact = (available * a.w) / totalW;
+      const base = Math.floor(exact);
+      const frac = exact - base;
+      return { id: a.id, kind: a.kind, w: a.w, frac, coins: base };
+    });
+
+    let used = raw.reduce((s, a) => s + a.coins, 0);
+    let remaining = Math.max(0, available - used);
+
+    // Ensure at least 1 coin for the biggest deltas, if we have room.
+    raw.sort((a,b) => (b.w - a.w) || (b.frac - a.frac));
+    for (const a of raw){
+      if (remaining <= 0) break;
+      if (a.coins === 0){
+        a.coins = 1;
+        remaining -= 1;
+      }
+    }
+
+    // Distribute leftovers by fractional remainder.
+    raw.sort((a,b) => (b.frac - a.frac) || (b.w - a.w));
+    let idx = 0;
+    while (remaining > 0 && raw.length){
+      raw[idx % raw.length].coins += 1;
+      remaining -= 1;
+      idx += 1;
+    }
+
+    // Final list (only those with coins)
+    return raw.filter(a => a.coins > 0).map(a => ({ id: a.id, kind: a.kind, coins: a.coins }));
+  }
+
+  function playResumeCatchupAnimations(animQueue){
     const anim = settings?.animations || {};
     if (!anim.enabled) return;
+    if (!isPageVisible()) return;
+
+    // Reduced motion: don't spawn coin bursts. Still do a single shake per affected device.
+    if (anim.reduce_motion){
+      const uniq = new Map();
+      for (const a of (animQueue || [])){
+        if (!a || !a.id || !(Number(a.delta) > 0)) continue;
+        if (!uniq.has(a.id)) uniq.set(a.id, a.kind || "accepted");
+      }
+      for (const [id, kind] of uniq.entries()){
+        triggerShareAnimation(id, 1, kind, { coinsToDrop: 0 });
+      }
+      return;
+    }
+
+      const max = Math.max(0, Number(anim.max_coins ?? 35));
+  const physics = !!anim.coin_physics;
+
+  // Resume catch-up burst cap: never spawn more than 50% of the total coin cap at once.
+  // (If there are fewer new shares than that, we show them all.)
+  const burstCap = Math.max(0, Math.floor(max * 0.5));
+
+  // Priority: new-best difficulty coins should never be skipped in catch-up.
+  // We'll reserve slots for them first, then distribute the remaining burst budget proportionally.
+  const nbById = new Map(); // id -> improvement (used only for prioritization)
+  let totalNewShares = 0;
+
+  for (const a of (animQueue || [])){
+    if (!a) continue;
+    const id = a.id;
+    const kind = a.kind || "accepted";
+    const d = Number(a.delta || 0);
+    if (!id) continue;
+
+    if (kind === "newbest"){
+      if (d > 0){
+        nbById.set(id, Math.max(nbById.get(id) || 0, d));
+        // Treat each "newbest" as at least one visible coin in the burst.
+        totalNewShares += 1;
+      }
+    }else{
+      if (d > 0) totalNewShares += Math.floor(d);
+    }
+  }
+
+  if (totalNewShares <= 0 && !nbById.size) return;
+  if (burstCap <= 0) return;
+
+  // Target burst size (cap at 50% of max coins).
+  const desiredSpawn = Math.max(0, Math.min(burstCap, Math.floor(totalNewShares)));
+
+  // Current capacity
+  const liveNow = physics ? liveCoinCount() : coinCount;
+  let available = Math.max(0, max - liveNow);
+
+  // In physics mode, we can evict some older coins to make room for the burst.
+  // Limit eviction to 50% of the *existing* coins, and only as many as needed.
+  if (physics){
+    const needExtra = Math.max(0, desiredSpawn - available);
+    const maxEvict = Math.floor(Math.max(0, liveNow) * 0.5);
+    const evict = Math.min(needExtra, maxEvict);
+    if (evict > 0){
+      // Fast fade-out so the "burst" feels snappy on return.
+      fadeOldestCoins(evict, 0, 650);
+    }
+    available = Math.max(0, max - liveCoinCount());
+  }
+
+  let spawnBudget = Math.min(desiredSpawn, available);
+  if (spawnBudget <= 0) return;
+
+  const allocMap = new Map(); // key: `${id}|${kind}` -> coins
+
+  // 1) Reserve at least 1 coin per device with a new-best improvement (biggest improvements first)
+  if (nbById.size){
+    const nbEntries = Array.from(nbById.entries()).sort((a,b) => (b[1] - a[1]));
+    const reserveCount = Math.min(spawnBudget, nbEntries.length);
+    for (let i=0; i<reserveCount; i++){
+      const id = nbEntries[i][0];
+      const key = `${id}|newbest`;
+      allocMap.set(key, (allocMap.get(key) || 0) + 1);
+    }
+    spawnBudget -= reserveCount;
+  }
+
+  // 2) Distribute any remaining budget proportionally across deltas,
+  // giving "newbest" extra weight so it wins ties when slots are tight.
+  if (spawnBudget > 0){
+    const weightedQueue = (animQueue || [])
+      .map(a => {
+        const id = a && a.id;
+        const kind = (a && a.kind) || "accepted";
+        const d = Math.max(0, Number(a && a.delta || 0));
+        if (!id || !(d > 0)) return null;
+        const w = (kind === "newbest") ? (d * 3) : d;
+        return { id, kind, delta: w };
+      })
+      .filter(Boolean);
+
+    const alloc = allocateCoinsProportional(weightedQueue, spawnBudget);
+    for (const a of alloc){
+      const key = `${a.id}|${a.kind || "accepted"}`;
+      allocMap.set(key, (allocMap.get(key) || 0) + (a.coins || 0));
+    }
+  }
+
+  if (!allocMap.size) return;
+
+  for (const [key, coins] of allocMap.entries()){
+    const bar = key.lastIndexOf("|");
+    const id = key.slice(0, bar);
+    const kind = key.slice(bar+1);
+    triggerShareAnimation(id, 1, kind, { coinsToDrop: coins, skipCapacity: true });
+  }
+}
+
+
+function triggerShareAnimation(deviceId, delta, kind="accepted", opts={}){
+    const anim = settings?.animations || {};
+    if (!anim.enabled) return;
+    if (!isPageVisible()) return;
 
     const card = document.querySelector(`.miner-card[data-id="${deviceId}"]`);
     if (card && anim.shake_on_share){
@@ -3224,7 +3525,9 @@ async function loadDevices(){
     }
 
     if (anim.coin_drop){
-      const coinsToDrop = Math.min(Math.max(1, delta || 1), 3);
+      const coinsToDrop = (opts && isFinite(Number(opts.coinsToDrop)))
+        ? Math.max(0, Math.floor(Number(opts.coinsToDrop)))
+        : Math.min(Math.max(1, delta || 1), 3);
       const max = Number(anim.max_coins ?? 35);
 
       if (anim.coin_physics){
@@ -3232,7 +3535,9 @@ async function loadDevices(){
         // immediately fading freshly-spawned coins (which can look like a "pop").
 		
 		// Physics mode: spawn immediately; if we exceed the cap during a burst, we prune smoothly after.
-        //ensureCoinCapacity(coinsToDrop); Removed - can re-add if persistent overflow ends up being drastic.
+        if (!(opts && opts.skipCapacity)){
+          ensureCoinCapacity(coinsToDrop);
+        }
         for (let i=0;i<coinsToDrop;i++){
           dropCoinFromCard(card, kind);
         }
@@ -3276,7 +3581,7 @@ async function loadDevices(){
     coinCount = Math.max(0, coinCount - 1);
   }
 
-  function fadeOldestCoins(n, minAgeMs=0){
+  function fadeOldestCoins(n, minAgeMs=0, removeDelayMs=1100){
     if (!n || n <= 0) return 0;
 
     const now = performance.now();
@@ -3307,7 +3612,7 @@ async function loadDevices(){
         });
       });
 
-      setTimeout(() => removeCoinBody(b), 1100);
+      setTimeout(() => removeCoinBody(b), Math.max(0, removeDelayMs|0));
     }
     return targets.length;
   }
@@ -3415,8 +3720,14 @@ function updateCoinPhysicsConfig(){
     const restitutionCoinRef = 520;   // px/s reference speed for blending min→max
     const airDrag = 0.018;
 
-    let dtRaw = (now - coinLastT) / 1000;
+    const gapMs = (now - coinLastT);
     coinLastT = now;
+    // If the browser suspended RAF (tab hidden / display off / sleep), clear queued coins so we don't pop a pile at once.
+    if (gapMs > 5000){
+      clearAllCoins();
+      return;
+    }
+    let dtRaw = gapMs / 1000;
     if (!isFinite(dtRaw)) dtRaw = 0.016;
     dtRaw = Math.max(0.001, Math.min(0.05, dtRaw));
 
@@ -3660,6 +3971,11 @@ function updateCoinPhysicsConfig(){
   // Init
   loadTheme();
 
+  // Visibility handling (prevents DOM/coin buildup when the tab is hidden)
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("pagehide", handleVisibilityChange);
+  window.addEventListener("pageshow", handleVisibilityChange);
+
   (async () => {
     try{
       await loadSettings();
@@ -3673,7 +3989,6 @@ function updateCoinPhysicsConfig(){
     }
   })();
 
-})();
-</script>
+})();</script>
 </body>
 </html>
