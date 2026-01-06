@@ -320,6 +320,15 @@
         </div>
       </div>
 
+      <!-- NEW: manage selected custom profile -->
+      <div class="row" id="profileManageRow" style="justify-content:flex-start; margin-top:-0.25rem;">
+        <button class="btn secondary shrink" id="renameProfileBtn" title="Rename selected custom profile">Rename</button>
+        <button class="btn secondary shrink" id="updateProfileBtn" title="Update selected custom profile with current config">Save changes</button>
+        <button class="btn danger shrink" id="deleteProfileBtn" title="Delete selected custom profile">Delete</button>
+        <span class="muted" id="profileManageHint" style="font-size:0.75rem;"></span>
+      </div>
+
+
       <div class="row">
         <label class="switch">
           <input type="checkbox" id="autoProfileToggle" checked />
@@ -429,6 +438,10 @@
     const deviceSelect = document.getElementById("deviceSelect");
     const profileSelect = document.getElementById("profileSelect");
     const detectBtn = document.getElementById("detectBtn");
+    const renameProfileBtn = document.getElementById("renameProfileBtn");
+    const updateProfileBtn = document.getElementById("updateProfileBtn");
+    const deleteProfileBtn = document.getElementById("deleteProfileBtn");
+    const profileManageHint = document.getElementById("profileManageHint");
     const autoProfileToggle = document.getElementById("autoProfileToggle");
     const configGrid = document.getElementById("configGrid");
     const notesInput = document.getElementById("notesInput");
@@ -592,37 +605,132 @@
 
     function populateProfileSelect() {
       profileSelect.innerHTML = "";
+
+      // Disambiguate duplicate custom profile names in the dropdown
+      const nameCounts = {};
+      allProfiles.forEach((p) => {
+        const n = p.name || "";
+        nameCounts[n] = (nameCounts[n] || 0) + 1;
+      });
+
       allProfiles.forEach((p) => {
         const opt = document.createElement("option");
         opt.value = p.id;
-        opt.textContent = `${p.name}${p.builtin ? " (builtin)" : ""}`;
+
+        let label = p.name || "(unnamed)";
+        if (!p.builtin && nameCounts[p.name || ""] > 1) {
+          const shortId =
+            (p.id || "").includes(":") ? (p.id || "").split(":", 2)[1] : (p.id || "");
+          label = `${label} (#${shortId})`;
+        }
+        if (p.builtin) label += " (builtin)";
+
+        opt.textContent = label;
         profileSelect.appendChild(opt);
       });
+
+      updateProfileManageButtons();
     }
 
     function getProfileById(id) {
       return allProfiles.find((p) => p.id === id) || null;
     }
 
-    async function refreshProfiles() {
+    function isCustomProfile(p) {
+      return p && !p.builtin && (p.id || "").startsWith("custom:");
+    }
+
+    function updateProfileManageButtons() {
+      if (!renameProfileBtn || !updateProfileBtn || !deleteProfileBtn) return;
+
+      const p = getProfileById(profileSelect.value);
+      const enabled = isCustomProfile(p);
+
+      renameProfileBtn.disabled = !enabled;
+      updateProfileBtn.disabled = !enabled;
+      deleteProfileBtn.disabled = !enabled;
+
+      if (profileManageHint) {
+        profileManageHint.textContent = enabled
+          ? `Editing custom profile id ${p.id}`
+          : `Select a custom profile to rename / update / delete`;
+      }
+    }
+
+    async function createProfile(name, deviceType, cfg) {
+      const res = await fetch(`${apiBase}/api/profiles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          device_type: deviceType,
+          deviceType,
+          config: cfg,
+        }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+
+    async function deleteProfileById(profileId) {
+      const res = await fetch(`${apiBase}/api/profiles/${encodeURIComponent(profileId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    }
+
+    // "Edit in place" (UX) using current backend: create new profile, then delete old.
+    async function replaceProfile(oldProfile, newName, newDeviceType, newConfig) {
+      const created = await createProfile(newName, newDeviceType, newConfig);
+      try {
+        await deleteProfileById(oldProfile.id);
+      } catch (e) {
+        // If delete fails, keep the new profile anyway (better than losing changes)
+        console.warn("Failed to delete old profile:", e);
+      }
+      await refreshProfiles(created.id);
+      profileSelect.value = created.id;
+      deviceSelect.value = created.deviceType;
+      renderConfigGrid(created.config);
+      updateProfileManageButtons();
+      return created;
+    }
+
+    async function refreshProfiles(selectId = null) {
       const res = await fetch(`${apiBase}/api/profiles`);
       const data = await res.json();
       allProfiles = data.profiles || [];
       populateProfileSelect();
 
-      const gamma = allProfiles.find((p) => p.id === "builtin:gamma_602") || allProfiles[0];
-      if (gamma) {
-        deviceSelect.value = gamma.deviceType;
-        profileSelect.value = gamma.id;
-        renderConfigGrid(gamma.config);
+      // Preserve selection if possible
+      const desired = selectId || profileSelect.value;
+      const found = desired ? getProfileById(desired) : null;
+
+      if (found) {
+        profileSelect.value = found.id;
+        deviceSelect.value = found.deviceType;
+        renderConfigGrid(found.config);
+      } else {
+        const gamma =
+          allProfiles.find((p) => p.id === "builtin:gamma_602") || allProfiles[0];
+        if (gamma) {
+          deviceSelect.value = gamma.deviceType;
+          profileSelect.value = gamma.id;
+          renderConfigGrid(gamma.config);
+        }
       }
+
+      updateProfileManageButtons();
     }
+
 
     profileSelect.addEventListener("change", () => {
       const p = getProfileById(profileSelect.value);
       if (!p) return;
       deviceSelect.value = p.deviceType;
       renderConfigGrid(p.config);
+      updateProfileManageButtons();
     });
 
     autoProfileToggle.addEventListener("change", () => {
@@ -817,6 +925,82 @@
         saveProfileBtn.disabled = false;
       }
     });
+
+
+    // NEW: manage selected custom profile (rename / update / delete)
+    if (renameProfileBtn) {
+      renameProfileBtn.addEventListener("click", async () => {
+        const p = getProfileById(profileSelect.value);
+        if (!isCustomProfile(p)) return;
+
+        const newName = prompt("Rename profile to:", p.name || "");
+        if (newName == null) return;
+
+        const trimmed = newName.trim();
+        if (!trimmed) {
+          alert("Profile name cannot be empty.");
+          return;
+        }
+
+        renameProfileBtn.disabled = true;
+        try {
+          await replaceProfile(p, trimmed, p.deviceType, p.config);
+          alert("Profile renamed.");
+        } catch (err) {
+          console.error(err);
+          alert("Failed to rename profile.");
+        } finally {
+          renameProfileBtn.disabled = false;
+        }
+      });
+    }
+
+    if (updateProfileBtn) {
+      updateProfileBtn.addEventListener("click", async () => {
+        const p = getProfileById(profileSelect.value);
+        if (!isCustomProfile(p)) return;
+
+        const ok = confirm(
+          "Save changes to this profile?"
+        );
+        if (!ok) return;
+
+        const deviceType = deviceSelect.value;
+        const cfg = readConfigFromInputs(deviceType);
+
+        updateProfileBtn.disabled = true;
+        try {
+          await replaceProfile(p, p.name || "Profile", deviceType, cfg);
+          alert("Profile updated.");
+        } catch (err) {
+          console.error(err);
+          alert("Failed to update profile.");
+        } finally {
+          updateProfileBtn.disabled = false;
+        }
+      });
+    }
+
+    if (deleteProfileBtn) {
+      deleteProfileBtn.addEventListener("click", async () => {
+        const p = getProfileById(profileSelect.value);
+        if (!isCustomProfile(p)) return;
+
+        if (!confirm(`Delete profile "${p.name}"?`)) return;
+
+        deleteProfileBtn.disabled = true;
+        try {
+          await deleteProfileById(p.id);
+          await refreshProfiles();
+          alert("Profile deleted.");
+        } catch (err) {
+          console.error(err);
+          alert("Failed to delete profile.");
+        } finally {
+          deleteProfileBtn.disabled = false;
+        }
+      });
+    }
 
     startBtn.addEventListener("click", async () => {
       const ip = ipInput.value.trim();
