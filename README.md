@@ -346,6 +346,41 @@ volumes:
   bitaxe_bench_data:
     driver: local
 ```
+## Harlo OS support (fork addition)
+
+Besides AxeOS / ESP-Miner, the benchmark and dashboard can also drive miners running
+**Harlo OS** (Harlo Labs firmware, developed against the 0.2.101 API). Firmware is
+detected automatically per IP; nothing changes for AxeOS devices.
+
+How it works (see `miner_api.py`):
+
+| Benchmark step | AxeOS | Harlo OS |
+| --- | --- | --- |
+| Read telemetry | `GET /api/system/info` | `GET /api/telemetry` + `GET /api/info`, normalized to AxeOS field names |
+| Defaults / limits | `GET /api/system/asic` | `profile` in `/api/info` (stock, min and max frequency/core voltage) |
+| Apply V/F | `PATCH /api/system` | `PUT /api/tuning` `{"frequency_mhz","core_mv"}` |
+| Restart | `POST /api/system/restart` | `POST /api/reboot` (optional, see below) |
+
+Harlo OS specifics:
+
+- Tuning is applied live, so by default there is **no reboot per step**; the normal
+  `sleep_time` stabilization window is used instead, and the engine verifies that
+  `target_frequency_mhz` / `target_core_mv` in telemetry match what was requested.
+  Set `HARLO_REBOOT_AFTER_TUNING=1` to reboot after every step (if the tuning does not
+  survive the reboot it is re-applied live).
+- The sweep is clamped to the board limits from the Harlo OS profile, because the
+  firmware rejects values outside them (`{"ok":false,"output":"..."}`). Clamps are
+  recorded in the result JSON under `firmwareLimitNotes`.
+- If the board does not report an input voltage, the input-voltage checks are skipped
+  instead of failing the run. Chip temp, VR temp and power limits still apply.
+- Expected hashrate is computed from chip type (BM1370 = 2040 small cores, etc.), ASIC
+  count and frequency, since Harlo OS does not report it.
+- Force a backend with `MINER_FIRMWARE=axeos` or `MINER_FIRMWARE=harlo_os`.
+- `tools/mock_harlo_os.py` is a fake Harlo OS miner for dry runs without hardware.
+
+The Harlo OS API is not officially documented; endpoint shapes come from the
+[HashFleet](https://github.com/SMWARREN/HashFleet) Harlo driver. Verify on one miner first.
+
 ## Configuration
 
 The script includes several configurable parameters:

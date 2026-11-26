@@ -21,6 +21,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
+from miner_api import fetch_system_info_any
+
 import db
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -1527,16 +1529,20 @@ def _fetch_system_info(
         return ok, info, err, "avalon_cgminer"
 
     # Explicit HTTP polling (BitAxe/NerdQAxe style)
-    if pt in ("http", "bitaxe", "nerdqaxe"):
+    if pt in ("http", "bitaxe", "nerdqaxe", "harlo", "harlo_os"):
         url = f"http://{ip}/api/system/info"
         try:
             r = requests.get(url, timeout=timeout_s)
             r.raise_for_status()
             data = r.json()
             if not _looks_like_http_miner_payload(data):
-                return False, None, "Not a supported miner HTTP API", "http"
+                raise RuntimeError("Not a supported miner HTTP API")
             return True, data, None, "http"
         except Exception as e:
+            # Harlo OS has no /api/system/info; read its own API instead.
+            harlo = fetch_system_info_any(ip, timeout_s)
+            if harlo is not None:
+                return True, harlo, None, "http"
             return False, None, str(e), "http"
 
     # Auto-detect:
@@ -1564,14 +1570,22 @@ def _fetch_system_info(
 
     # Finally try BitAxe-style HTTP
     url = f"http://{ip}/api/system/info"
+    got_http_response = False
     try:
         r = requests.get(url, timeout=timeout_s)
+        got_http_response = True
         r.raise_for_status()
         data = r.json()
         if not _looks_like_http_miner_payload(data):
             raise RuntimeError("Not a supported miner HTTP API")
         return True, data, None, "http"
     except Exception as e:
+        # Harlo OS answers HTTP but has no /api/system/info. Only probe it when
+        # the host actually answered, so LAN scans don't double their timeouts.
+        if got_http_response:
+            harlo = fetch_system_info_any(ip, timeout_s)
+            if harlo is not None:
+                return True, harlo, None, "http"
         extras = []
         if err_rest:
             extras.append(f"rest probe: {err_rest}")
