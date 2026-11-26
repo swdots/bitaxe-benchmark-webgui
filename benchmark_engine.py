@@ -13,6 +13,8 @@ import math  # NEW
 
 import requests
 
+from miner_api import get_client, HARLO_OS, MinerAPIError
+
 
 class DeviceType(str, Enum):
     GAMMA_602 = "gamma_602"
@@ -83,26 +85,20 @@ def identify_device(bitaxe_ip: str, timeout: float = 5.0) -> Dict[str, Any]:
       - provide a suggested config
       - return device metadata and current starting conditions
     """
-    base = bitaxe_ip.strip()
-    if not base.startswith("http://") and not base.startswith("https://"):
-        base = "http://" + base
+    client = get_client(bitaxe_ip, timeout=timeout)
 
     system_info: Dict[str, Any] = {}
     asic_info: Dict[str, Any] = {}
 
-    # /api/system/info
+    # /api/system/info (or the Harlo OS equivalent, normalized to AxeOS keys)
     try:
-        r = requests.get(f"{base}/api/system/info", timeout=timeout)
-        r.raise_for_status()
-        system_info = r.json()
+        system_info = client.get_system_info(timeout=timeout)
     except Exception:
         system_info = {}
 
-    # /api/system/asic
+    # /api/system/asic (or the Harlo OS profile)
     try:
-        r2 = requests.get(f"{base}/api/system/asic", timeout=timeout)
-        r2.raise_for_status()
-        asic_info = r2.json()
+        asic_info = client.get_asic_info(timeout=timeout)
     except Exception:
         asic_info = {}
 
@@ -164,6 +160,12 @@ def identify_device(bitaxe_ip: str, timeout: float = 5.0) -> Dict[str, Any]:
     if isinstance(start_f, (int, float)):
         cfg_dict["initial_frequency"] = int(start_f)
 
+    # Harlo OS publishes its own tuning limits per board; the firmware rejects
+    # anything outside them, so keep the suggested sweep inside that window.
+    harlo_limits = asic_info.get("harloLimits") if isinstance(asic_info, dict) else None
+    if isinstance(harlo_limits, dict):
+        _clamp_cfg_to_limits(cfg_dict, harlo_limits)
+
     # Device metadata to show in UI / notes
     device_meta = {
         "asicModel": (
@@ -180,7 +182,11 @@ def identify_device(bitaxe_ip: str, timeout: float = 5.0) -> Dict[str, Any]:
         "firmwareVersion": isinstance(system_info, dict) and system_info.get("version"),
         "axeOSVersion": isinstance(system_info, dict) and system_info.get("axeOSVersion"),
         "hostname": isinstance(system_info, dict) and system_info.get("hostname"),
+        "firmwareFamily": client.firmware,
+        "firmwareLabel": client.firmware_label,
     }
+    if isinstance(harlo_limits, dict):
+        device_meta["harloLimits"] = harlo_limits
 
     # Starting / current runtime readings from /info
     starting = {}
@@ -206,11 +212,46 @@ def identify_device(bitaxe_ip: str, timeout: float = 5.0) -> Dict[str, Any]:
 
     return {
         "deviceType": dtype.value,
+        "firmware": client.firmware,
         "config": cfg_dict,
         "deviceInfo": device_meta,
         "starting": starting,
         "rawInfo": {"systemInfo": system_info, "asicInfo": asic_info},
     }
+
+
+def _clamp_cfg_to_limits(cfg: Dict[str, Any], lim: Dict[str, Any]) -> List[str]:
+    """Clamp min/max/initial V and F in a config dict to firmware limits. Returns notes."""
+    notes: List[str] = []
+
+    def num(k: str) -> Optional[int]:
+        v = lim.get(k)
+        return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    fmin, fmax = num("frequency_min"), num("frequency_max")
+    vmin, vmax = num("core_min"), num("core_max")
+
+    def lower_to(key: str, ceiling: Optional[int]) -> None:
+        if ceiling is not None and isinstance(cfg.get(key), (int, float)) and cfg[key] > ceiling:
+            notes.append(f"{key} {cfg[key]} -> {ceiling} (firmware limit)")
+            cfg[key] = ceiling
+
+    def raise_to(key: str, floor: Optional[int]) -> None:
+        if floor is not None and isinstance(cfg.get(key), (int, float)) and cfg[key] < floor:
+            notes.append(f"{key} {cfg[key]} -> {floor} (firmware limit)")
+            cfg[key] = floor
+
+    lower_to("max_allowed_frequency", fmax)
+    raise_to("min_allowed_frequency", fmin)
+    lower_to("max_allowed_voltage", vmax)
+    raise_to("min_allowed_voltage", vmin)
+    for key, lo, hi in (
+        ("initial_frequency", fmin, fmax),
+        ("initial_voltage", vmin, vmax),
+    ):
+        raise_to(key, lo)
+        lower_to(key, hi)
+    return notes
 
 
 class BenchmarkStatus(str, Enum):
@@ -243,6 +284,12 @@ class BenchmarkRunner:
 
         self.config = config
         self.on_finish = on_finish
+
+        # Firmware backend (AxeOS or Harlo OS), resolved on first use.
+        self._client = None
+        self.firmware: Optional[str] = None
+        self.limit_notes: List[str] = []
+        self.pre_run_settings: Optional[Dict[str, Any]] = None
 
         self.status: BenchmarkStatus = BenchmarkStatus.PENDING
         # Global progress 0–100 for the whole run
@@ -295,6 +342,7 @@ class BenchmarkRunner:
             data: Dict[str, Any] = {
                 "runId": self.run_id,
                 "bitaxeIp": self.bitaxe_ip_raw,
+                "firmware": self.firmware,
                 "status": self.status.value,
                 "progress": self.progress,
                 "currentVoltage": self.current_voltage,
@@ -857,29 +905,36 @@ class BenchmarkRunner:
                 "Benchmark time too short vs sample interval; not enough samples"
             )
 
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = get_client(self.base_url, timeout=10)
+            self.firmware = self._client.firmware
+        return self._client
+
     def _fetch_default_settings(self) -> None:
         """
         Get small_core_count, asic_count, and reasonable default voltage/frequency.
         Does NOT hard-fail if smallCoreCount is missing.
         """
-        # /api/system/info
-        url_info = f"{self.base_url}/api/system/info"
-        r = requests.get(url_info, timeout=10)
-        r.raise_for_status()
-        system_info = r.json()
+        # /api/system/info (AxeOS) or /api/telemetry + /api/info (Harlo OS)
+        system_info = self.client.get_system_info(timeout=10)
 
         self.small_core_count = system_info.get("smallCoreCount")
         self.asic_count = system_info.get("asicCount")
 
         self.default_voltage = system_info.get("coreVoltage", 1150)
         self.default_frequency = system_info.get("frequency", 500)
+        # What the miner ran before this benchmark, so a hand-tuned setting can
+        # be restored manually from the results JSON.
+        self.pre_run_settings = {
+            "coreVoltage": system_info.get("coreVoltage"),
+            "frequency": system_info.get("frequency"),
+        }
 
         # /api/system/asic (optional but helpful)
-        url_asic = f"{self.base_url}/api/system/asic"
         try:
-            r2 = requests.get(url_asic, timeout=10)
-            r2.raise_for_status()
-            asic_info = r2.json()
+            asic_info = self.client.get_asic_info(timeout=10)
         except Exception:
             asic_info = {}
 
@@ -891,26 +946,68 @@ class BenchmarkRunner:
             if self.asic_count is None:
                 self.asic_count = asic_info.get("asicCount", self.asic_count)
 
+            # Harlo OS: the firmware rejects V/F outside its board profile, so
+            # keep the sweep inside those limits instead of failing mid-run.
+            lim = asic_info.get("harloLimits")
+            if isinstance(lim, dict):
+                cfg_view = asdict(self.config)
+                self.limit_notes = _clamp_cfg_to_limits(cfg_view, lim)
+                for k in (
+                    "max_allowed_frequency", "min_allowed_frequency",
+                    "max_allowed_voltage", "min_allowed_voltage",
+                    "initial_frequency", "initial_voltage",
+                ):
+                    setattr(self.config, k, cfg_view[k])
+
+
     def _get_system_info(self) -> Optional[Dict[str, Any]]:
         retries = 3
         for _ in range(retries):
             try:
-                r = requests.get(f"{self.base_url}/api/system/info", timeout=10)
-                r.raise_for_status()
-                return r.json()
-            except requests.exceptions.RequestException:
+                return self.client.get_system_info(timeout=10)
+            except (requests.exceptions.RequestException, MinerAPIError, ValueError):
                 time.sleep(5)
         return None
 
     def _set_system_settings(self, core_voltage: int, frequency: int) -> None:
-        payload = {
-            "coreVoltage": core_voltage,
-            "frequency": frequency,
-        }
-        r = requests.patch(f"{self.base_url}/api/system", json=payload, timeout=10)
-        r.raise_for_status()
-        # restart + wait for stabilization
-        self._restart_system(wait=self.config.sleep_time)
+        self.client.apply_settings(core_voltage, frequency, timeout=10)
+        if self.client.needs_restart_after_apply:
+            # restart + wait for stabilization (AxeOS always, Harlo OS optional)
+            self._restart_system(wait=self.config.sleep_time)
+            if self.client.firmware == HARLO_OS:
+                # If tuning did not survive the reboot, apply it again live.
+                if self.client.verify_settings(core_voltage, frequency):
+                    self.client.apply_settings(core_voltage, frequency, timeout=10)
+                    self._sleep_interruptible(self.config.sleep_time)
+        else:
+            # Harlo OS applies tuning live: give it the same stabilization window.
+            self._sleep_interruptible(self.config.sleep_time)
+            self._wait_reachable()
+
+        problem = self.client.verify_settings(core_voltage, frequency)
+        if problem:
+            raise MinerAPIError(
+                f"{self.client.firmware_label} did not take {core_voltage} mV / {frequency} MHz: {problem}"
+            )
+
+    def _sleep_interruptible(self, seconds: float) -> None:
+        # Same wall-clock wait as time.sleep, but returns early on cancel.
+        self._stop.wait(timeout=max(0.0, float(seconds)))
+
+    def _wait_reachable(self, poll_timeout: int = 120, poll_interval: int = 5) -> None:
+        deadline = time.time() + poll_timeout
+        last_exc: Optional[Exception] = None
+        while time.time() < deadline:
+            try:
+                self.client.get_system_info(timeout=10)
+                return
+            except (requests.exceptions.RequestException, MinerAPIError, ValueError) as e:
+                last_exc = e
+                time.sleep(poll_interval)
+        raise TimeoutError(
+            f"System at {self.base_url} did not become reachable within "
+            f"{poll_timeout}s. Last error: {last_exc}"
+        )
 
     def _restart_system(
         self,
@@ -921,13 +1018,12 @@ class BenchmarkRunner:
         """Restart the target system, then wait for it to become reachable again.
 
         Flow:
-          1) POST /api/system/restart
+          1) POST /api/system/restart (AxeOS) or POST /api/reboot (Harlo OS)
           2) Sleep for `wait` seconds (stabilization window)
-          3) Poll GET /api/system/info every `poll_interval` seconds for up to
+          3) Poll the info endpoint every `poll_interval` seconds for up to
              `poll_timeout` seconds. If still unreachable, raise TimeoutError.
         """
-        r = requests.post(f"{self.base_url}/api/system/restart", timeout=10)
-        r.raise_for_status()
+        self.client.restart(timeout=10)
 
         if wait > 0:
             time.sleep(wait)
@@ -935,22 +1031,7 @@ class BenchmarkRunner:
         if poll_timeout <= 0:
             return
 
-        deadline = time.time() + poll_timeout
-        last_exc: Optional[Exception] = None
-
-        while time.time() < deadline:
-            try:
-                r = requests.get(f"{self.base_url}/api/system/info", timeout=10)
-                r.raise_for_status()
-                return
-            except requests.exceptions.RequestException as e:
-                last_exc = e
-                time.sleep(poll_interval)
-
-        raise TimeoutError(
-            f"System at {self.base_url} did not become reachable within "
-            f"{poll_timeout}s after restart. Last error: {last_exc}"
-        )
+        self._wait_reachable(poll_timeout=poll_timeout, poll_interval=poll_interval)
 
     # --- core benchmark iteration ---
 
@@ -1069,7 +1150,8 @@ class BenchmarkRunner:
                 shares_acc_end = acc_int
                 shares_rej_end = rej_int
 
-            if temp is None or voltage is None:
+            voltage_unavailable = bool(info.get("_inputVoltageUnavailable"))
+            if temp is None or (voltage is None and not voltage_unavailable):
                 return None, None, None, False, None, "MISSING_TEMP_OR_VOLTAGE", None
 
             if temp < 5:
@@ -1081,10 +1163,10 @@ class BenchmarkRunner:
             if vr_temp is not None and vr_temp >= cfg.max_vr_temp:
                 return None, None, None, False, None, "VR_TEMP_EXCEEDED", None
 
-            if voltage < cfg.min_input_voltage:
+            if voltage is not None and voltage < cfg.min_input_voltage:
                 return None, None, None, False, None, "INPUT_VOLTAGE_BELOW_MIN", None
 
-            if voltage > cfg.max_input_voltage:
+            if voltage is not None and voltage > cfg.max_input_voltage:
                 return None, None, None, False, None, "INPUT_VOLTAGE_ABOVE_MAX", None
 
             if hash_rate is None or power is None:
@@ -1402,6 +1484,9 @@ class BenchmarkRunner:
             "runId": self.run_id,
             "bitaxeIp": self.bitaxe_ip_raw,
             "deviceType": self.config.device_type.value,
+            "firmware": self.firmware,
+            "firmwareLimitNotes": self.limit_notes,
+            "preRunSettings": self.pre_run_settings,
             "startTime": self.start_time,
             "endTime": self.end_time,
             "config": asdict(self.config),
